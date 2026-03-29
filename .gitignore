@@ -1,0 +1,20 @@
+# 密钥与本地环境
+server/.env
+.env
+.env.local
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+server/.venv/
+
+# 编辑器与工具
+.cursor/
+mcps/
+
+# OS
+Thumbs.db
+.DS_Store

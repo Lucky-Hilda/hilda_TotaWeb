@@ -1,0 +1,41 @@
+# 将 web/ 部署到 GitHub Pages（静态站）。API 仍需单独托管，见 DEPLOY.md。
+name: Deploy web to GitHub Pages
+
+on:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 若仓库已设置 Secret：PUBLIC_AGENT_API_URL（例如 https://xxx.onrender.com），则写入 agent-config.js
+      - name: Inject public API URL
+        env:
+          API_URL: ${{ secrets.PUBLIC_AGENT_API_URL }}
+        run: |
+          if [ -n "$API_URL" ]; then
+            printf '%s\n' "window.__AGENT_API__ = \"${API_URL}\";" > web/agent-config.js
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - uses: actions/deploy-pages@v4
+        id: deployment
