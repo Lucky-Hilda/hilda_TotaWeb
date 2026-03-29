@@ -11,7 +11,7 @@
 
   /** 后端 API（可在页面中设置 window.__AGENT_API__ 覆盖） */
   const API_BASE =
-    (typeof window !== "undefined" && window.__AGENT_API__) || "http://127.0.0.1:8000";
+    (typeof window !== "undefined" && window.__AGENT_API__) || "https://hilda-totaweb.onrender.com";
   /** 设为 false 时仅用本地规则，不请求 LongCat */
   const USE_REMOTE_AGENT =
     typeof window === "undefined" || window.__USE_REMOTE_AGENT__ !== false;
