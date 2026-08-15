@@ -13,6 +13,7 @@
 | **`README.md`** | 本文件：运行方式、功能概览、目录说明。 |
 | **`macau_tower_destination_agent_prd_v1.md`** | **PRD（产品需求文档）**：愿景、用户旅程、功能清单、Agent 流程、提示词与评估等非功能要求。 |
 | **`macau_tower_implementation_vs_prd_v1.md`** | **实现对照说明**：当前网页/API 相对 PRD 的覆盖情况，以及 **Agent 链路**（前端本地规则 / 远程 RAG+LongCat / 失败兜底）的逐步说明。 |
+| **`macau_tower_pm_signals_v1.md`** | **PM 信号**：北极星与核心指标、埋点 Schema（含 `session_id` / `reply_path` / `link_kind`）、漏斗、P0 缺口假设与验证、用户画像与路线图（RICE、MVP 边界）。 |
 | **`macau_tower_demo_kb_v1.md`** | **RAG 知识库正文**：按 `---` 分节；后端 `rag.py` 做 BM25 检索，将片段注入对话 system prompt。**改内容即可影响 Agent 回答依据（需在常识范围内，勿当实时票务数据）**。 |
 | **`DEPLOY.md`** | **部署上线说明**：前后端拆分部署、`window.__AGENT_API__`、环境变量、Docker 与自检清单（需自行在云控制台操作）。 |
 
@@ -143,6 +144,7 @@ macau_tower_destination_agent/
 ├── README.md
 ├── macau_tower_destination_agent_prd_v1.md    # PRD
 ├── macau_tower_implementation_vs_prd_v1.md    # 实现对照 + Agent 链路
+├── macau_tower_pm_signals_v1.md               # PM 指标、埋点 Schema、路线图
 ├── macau_tower_demo_kb_v1.md                  # RAG 知识库（勿随意移动或删空）
 ├── DEPLOY.md、Dockerfile、.dockerignore       # 部署与容器（可选）
 ├── web/
@@ -173,3 +175,4 @@ macau_tower_destination_agent/
 ## 免责声明
 
 演示站中的票价、开放时段等**不保证为实时数据**；出行请以澳门塔官方渠道为准。
+

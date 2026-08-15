@@ -11,13 +11,22 @@
 
   /** 后端 API（可在页面中设置 window.__AGENT_API__ 覆盖） */
   const API_BASE =
-    (typeof window !== "undefined" && window.__AGENT_API__) || "https://hilda-totaweb.onrender.com";
+    (typeof window !== "undefined" && window.__AGENT_API__) || "http://127.0.0.1:8000";
   /** 设为 false 时仅用本地规则，不请求 LongCat */
   const USE_REMOTE_AGENT =
     typeof window === "undefined" || window.__USE_REMOTE_AGENT__ !== false;
 
+  /** 演示埋点版本号（与 PM 文档 `demo_version` 对齐） */
+  const DEMO_VERSION = "1.0.0";
+  /** 匿名会话 ID，用于漏斗与对接 Mixpanel/GA4 的 distinct_id / session 维度 */
+  const SESSION_ID =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : "sess_" + Date.now() + "_" + Math.random().toString(36).slice(2, 12);
+
   /** OpenAI 格式对话历史，供 /api/chat 使用 */
   let chatHistory = [];
+  let chatPending = false;
 
   const I18N = {
     zh: {
@@ -165,13 +174,22 @@
   /** @type {{ intent: string, tags: string[], lastPlan?: object }} */
   let sessionContext = { intent: "", tags: [], lastPlan: null };
 
+  /** 内存埋点队列；track 自动附带 session、语言、版本，便于导出为上报 JSON */
   const analytics = {
     events: [],
     track(name, payload = {}) {
-      const row = { t: Date.now(), name, ...payload };
+      const row = {
+        t: Date.now(),
+        name,
+        ...payload,
+        session_id: SESSION_ID,
+        lang,
+        demo_version: DEMO_VERSION,
+        use_remote_agent: USE_REMOTE_AGENT,
+      };
       this.events.push(row);
       if (typeof console !== "undefined" && console.debug) {
-        console.debug("[analytics]", name, payload);
+        console.debug("[analytics]", name, row);
       }
     },
   };
@@ -412,8 +430,48 @@
   }
 
   /** 模型返回的纯文本转气泡 HTML（保留换行） */
+  function formatInlineMarkdown(line) {
+    const strongPattern = new RegExp("\\*\\*(.+?)\\*\\*", "g");
+    return escapeHtml(String(line)).replace(strongPattern, "<strong>$1</strong>");
+  }
+
   function formatAssistantHtml(raw) {
-    return escapeHtml(String(raw)).replace(/\n/g, "<br/>");
+    const lines = String(raw).replace(/\r/g, "").split("\n");
+    const html = [];
+    let listType = "";
+
+    function closeList() {
+      if (!listType) return;
+      html.push(`</${listType}>`);
+      listType = "";
+    }
+
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        closeList();
+        return;
+      }
+
+      const ordered = trimmed.match(/^\d+[.)、]\s*(.+)$/);
+      const unordered = trimmed.match(/^[-•]\s+(.+)$/);
+      if (ordered || unordered) {
+        const nextType = ordered ? "ol" : "ul";
+        if (listType !== nextType) {
+          closeList();
+          listType = nextType;
+          html.push(`<${listType}>`);
+        }
+        html.push(`<li>${formatInlineMarkdown((ordered || unordered)[1])}</li>`);
+        return;
+      }
+
+      closeList();
+      html.push(`<p>${formatInlineMarkdown(trimmed)}</p>`);
+    });
+
+    closeList();
+    return `<div class="assistant-copy">${html.join("")}</div>`;
   }
 
   function seedingAnswer() {
@@ -454,6 +512,112 @@
   }
 
   /** 为 Agent 消息挂载虚拟塔形象头像 */
+  function isRouteRequest(text) {
+    const det = detectIntent(text);
+    return (
+      det.intent === "recommend" ||
+      det.intent === "recommendation" ||
+      /路线|行程|安排|怎么玩|几小时|半天|半日|plan|route|itinerary/i.test(text)
+    );
+  }
+
+  function routeJourneyHtml(route) {
+    const labels =
+      lang === "en"
+        ? {
+            ready: "YOUR ROUTE IS READY",
+            time: "Best window",
+            duration: "Duration",
+            pace: "Pace",
+            tip: "Tota note",
+            reminders: "Before you go",
+            official: "Check official info",
+            memento: "Create memento",
+          }
+        : {
+            ready: "路线已生成",
+            time: "建议时段",
+            duration: "总时长",
+            pace: "节奏",
+            tip: "塔塔提示",
+            reminders: "出发前留意",
+            official: "查看官方信息",
+            memento: "生成纪念卡",
+          };
+    const stops = Array.isArray(route.stops) ? route.stops.slice(0, 6) : [];
+    const stopHtml = stops
+      .map((stop, index) => {
+        const tip = stop.tip
+          ? `<p class="route-stop__tip"><span>${escapeHtml(labels.tip)}</span>${escapeHtml(stop.tip)}</p>`
+          : "";
+        return `<li class="route-stop">
+          <div class="route-stop__time"><strong>${escapeHtml(stop.time)}</strong><span>${escapeHtml(stop.duration)}</span></div>
+          <div class="route-stop__rail" aria-hidden="true"><span></span></div>
+          <article class="route-stop__card">
+            <span class="route-stop__index">${String(index + 1).padStart(2, "0")}</span>
+            <h4>${escapeHtml(stop.title)}</h4>
+            <p>${escapeHtml(stop.description)}</p>
+            ${tip}
+          </article>
+        </li>`;
+      })
+      .join("");
+    const reminders =
+      Array.isArray(route.reminders) && route.reminders.length
+        ? `<aside class="route-reminders"><strong>${escapeHtml(labels.reminders)}</strong><ul>${route.reminders
+            .slice(0, 4)
+            .map((item) => `<li>${escapeHtml(item)}</li>`)
+            .join("")}</ul></aside>`
+        : "";
+    const followUp = route.follow_up
+      ? `<p class="route-follow-up">${escapeHtml(route.follow_up)}</p>`
+      : "";
+
+    return `<div class="msg__bubble msg__bubble--route">
+      <article class="route-journey" aria-label="${escapeHtml(route.title)}">
+        <header class="route-journey__header">
+          <p class="route-journey__eyebrow"><span aria-hidden="true"></span>${escapeHtml(labels.ready)}</p>
+          <h3>${escapeHtml(route.title)}</h3>
+          <p class="route-journey__summary">${escapeHtml(route.summary)}</p>
+          <dl class="route-journey__meta">
+            <div><dt>${escapeHtml(labels.time)}</dt><dd>${escapeHtml(route.recommended_time)}</dd></div>
+            <div><dt>${escapeHtml(labels.duration)}</dt><dd>${escapeHtml(route.duration)}</dd></div>
+            <div><dt>${escapeHtml(labels.pace)}</dt><dd>${escapeHtml(route.pace)}</dd></div>
+          </dl>
+        </header>
+        <ol class="route-timeline">${stopHtml}</ol>
+        ${reminders}
+        ${followUp}
+        <div class="route-journey__actions">
+          <a href="https://www.macautower.com.mo/" target="_blank" rel="noopener noreferrer" data-track="route_ticket">${escapeHtml(
+            labels.official
+          )}<span aria-hidden="true">↗</span></a>
+          <button type="button" class="js-memento-from-card">${escapeHtml(labels.memento)}</button>
+        </div>
+      </article>
+    </div>`;
+  }
+
+  function updatePlannerPreview(route) {
+    const aside = document.getElementById("planner-preview");
+    const body = aside && aside.querySelector(".planner-aside__body");
+    if (!aside || !body) return;
+    const stops = Array.isArray(route.stops) ? route.stops.slice(0, 5) : [];
+    aside.classList.add("has-route");
+    body.innerHTML = `<div class="planner-result">
+      <span class="planner-result__label">${lang === "en" ? "LIVE ROUTE" : "实时路线"}</span>
+      <h3>${escapeHtml(route.title)}</h3>
+      <p class="planner-result__time">${escapeHtml(route.recommended_time)} · ${escapeHtml(route.duration)}</p>
+      <ol>${stops
+        .map(
+          (stop) =>
+            `<li><span>${escapeHtml(stop.time)}</span><strong>${escapeHtml(stop.title)}</strong></li>`
+        )
+        .join("")}</ol>
+      <p class="planner-result__reason">${escapeHtml(route.summary)}</p>
+    </div>`;
+  }
+
   function buildAgentAvatar() {
     const av = document.createElement("div");
     av.className = "msg__avatar";
@@ -534,9 +698,7 @@
         void scrollToSnapSection("guide");
       });
     });
-    container.querySelectorAll("a[data-track]").forEach((a) => {
-      a.addEventListener("click", () => analytics.track("conversion_click", { href: a.getAttribute("href") }));
-    });
+    // 带 data-track 的转化链路由 init 中 document 委托统一上报，避免与静态入口重复绑定
   }
 
   function processReply(userText) {
@@ -603,9 +765,21 @@
     }
   }
 
+  function setChatPending(pending) {
+    chatPending = pending;
+    const sendButton = document.getElementById("chat-send");
+    const chat = document.getElementById("chat");
+    if (sendButton) {
+      sendButton.disabled = pending;
+      sendButton.setAttribute("aria-busy", String(pending));
+    }
+    if (chat) chat.setAttribute("aria-busy", String(pending));
+  }
+
   async function sendUserMessage(text) {
     const trimmed = (text || "").trim();
-    if (!trimmed) return;
+    if (!trimmed || chatPending) return;
+    setChatPending(true);
     appendUserMessage(trimmed);
     chatHistory.push({ role: "user", content: trimmed });
 
@@ -616,19 +790,22 @@
         removeTyping(tid);
         const reply = processReply(trimmed);
         appendPureLocalReply(reply);
-        analytics.track("message_round", {});
+        analytics.track("message_round", { reply_path: "local_only" });
+        setChatPending(false);
       }, 350);
       return;
     }
 
+    let replyPath = "remote_ok";
     try {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: chatHistory.slice(-20),
-          max_tokens: 1000,
-          temperature: 0.7,
+          response_mode: isRouteRequest(trimmed) ? "route" : "auto",
+          max_tokens: isRouteRequest(trimmed) ? 1600 : 1000,
+          temperature: isRouteRequest(trimmed) ? 0.45 : 0.7,
         }),
       });
       removeTyping(tid);
@@ -642,9 +819,24 @@
         throw new Error("empty assistant content");
       }
       chatHistory.push({ role: "assistant", content });
-      appendAgentMessage(formatAssistantHtml(content));
-      analytics.track("agent_api_success", {});
+      if (data.presentation && data.presentation.type === "route") {
+        sessionContext.lastPlan = data.presentation;
+        const div = document.createElement("div");
+        div.innerHTML = routeJourneyHtml(data.presentation);
+        appendAgentMessage(div.firstElementChild, true);
+        updatePlannerPreview(data.presentation);
+        analytics.track("recommendation_shown", {
+          count: data.presentation.stops.length,
+          source: "remote_structured",
+        });
+      } else {
+        appendAgentMessage(formatAssistantHtml(content));
+      }
+      analytics.track("agent_api_success", {
+        presentation: data.presentation ? data.presentation.type : "text",
+      });
     } catch (err) {
+      replyPath = "remote_fallback";
       removeTyping(tid);
       analytics.track("agent_api_error", { message: String(err && err.message) });
       appendAgentMessage(escapeHtml(t("localFallbackHint")));
@@ -666,7 +858,8 @@
       chatHistory.push({ role: "assistant", content: assistantAcc });
     }
 
-    analytics.track("message_round", {});
+    setChatPending(false);
+    analytics.track("message_round", { reply_path: replyPath });
   }
 
   function generateMemorialText() {
@@ -674,7 +867,7 @@
     const tags = sessionContext.tags || [];
     const plan = sessionContext.lastPlan;
     if (plan) {
-      const theme = plan.plan_title;
+      const theme = plan.plan_title || plan.title || "";
       if (tags.includes("couple") || /情侣|夜景/i.test(theme)) {
         return isEn
           ? "From Macau Tower tonight: the city lights don’t rush — they gather. Share this height, this breeze, and this slow glow with someone who matters."
@@ -839,6 +1032,28 @@
     return scrollToSectionPixel("agent");
   }
 
+  /** 对话区首次进入视口约一半时上报，用于「互动进入率」漏斗（单次会话只记一次） */
+  function observeAgentSectionVisibleOnce() {
+    const el = document.getElementById("agent");
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    let done = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (done) return;
+        for (let i = 0; i < entries.length; i++) {
+          if (entries[i].isIntersecting) {
+            done = true;
+            analytics.track("agent_section_visible", { threshold: 0.5 });
+            io.disconnect();
+            return;
+          }
+        }
+      },
+      { threshold: [0.5] }
+    );
+    io.observe(el);
+  }
+
   function focusChatInput() {
     const input = document.getElementById("chat-input");
     if (input) input.focus({ preventScroll: true });
@@ -882,6 +1097,15 @@
       });
     });
 
+    document.addEventListener("click", (e) => {
+      const a = e.target && e.target.closest && e.target.closest("a[data-track]");
+      if (!a) return;
+      analytics.track("conversion_click", {
+        href: a.getAttribute("href"),
+        link_kind: a.getAttribute("data-track") || "unknown",
+      });
+    });
+
     document.getElementById("chat-form").addEventListener("submit", (e) => {
       e.preventDefault();
       const input = document.getElementById("chat-input");
@@ -915,6 +1139,7 @@
     });
 
     initParticles();
+    observeAgentSectionVisibleOnce();
 
     // 首屏停留时长（简单示例）
     const t0 = Date.now();
@@ -929,3 +1154,4 @@
     init();
   }
 })();
+

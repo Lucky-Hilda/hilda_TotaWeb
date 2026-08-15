@@ -1,150 +1,211 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- 远程 Agent：先启动 server/run.bat（或 uvicorn），再用 http 访问本页；默认 API 为 http://127.0.0.1:8000 -->
-  <title>Macau Tower Destination Agent</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#070b11">
+  <meta name="description" content="与塔塔对话，按时间、同行人与偏好规划澳门塔观景、夜景与半日路线。">
+  <meta property="og:title" content="澳门塔 · Tota 目的地向导">
+  <meta property="og:description" content="从塔上，重新看见澳门。让塔塔为你整理一条刚刚好的澳门塔路线。">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="assets/macau-tower-social-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="澳门塔 · Tota 目的地向导">
+  <meta name="twitter:description" content="从塔上，重新看见澳门。让塔塔为你整理一条刚刚好的澳门塔路线。">
+  <meta name="twitter:image" content="assets/macau-tower-social-card.png">
+  <title>澳门塔 · Tota 目的地向导</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20260815-route3">
 </head>
 <body>
-  <header class="site-header">
-    <a href="#" class="logo" data-i18n="logo">Macau Tower</a>
-    <nav class="header-nav">
+  <a class="skip-link" href="#main-content" data-copy-zh="跳到主要内容" data-copy-en="Skip to main content">跳到主要内容</a>
+
+  <header class="site-header" id="site-header">
+    <a href="#hero" class="logo" aria-label="澳门塔首页">
+      <span class="logo__axis" aria-hidden="true"></span>
+      <span class="logo__text"><strong>Macau Tower</strong><small>Destination Agent</small></span>
+    </a>
+
+    <button class="menu-toggle" id="menu-toggle" type="button" aria-expanded="false" aria-controls="header-nav">
+      <span class="menu-toggle__label" data-copy-zh="菜单" data-copy-en="Menu">菜单</span>
+      <span class="menu-toggle__lines" aria-hidden="true"></span>
+    </button>
+
+    <nav class="header-nav" id="header-nav" aria-label="主要导航">
+      <a href="#agent" class="header-link js-scroll-agent" data-copy-zh="问塔塔" data-copy-en="Ask Tota">问塔塔</a>
+      <a href="#highlights" class="header-link" data-copy-zh="精选体验" data-copy-en="Experiences">精选体验</a>
+      <a href="#guide" class="header-link" data-copy-zh="场景导览" data-copy-en="Scene guide">场景导览</a>
+      <a href="#moment" class="header-link" data-copy-zh="澳门塔时刻" data-copy-en="Your moment">澳门塔时刻</a>
       <button type="button" class="lang-toggle" id="lang-toggle" aria-label="切换语言">EN / 中</button>
-      <a href="#highlights" class="btn-ghost" data-i18n="navExplore">Explore</a>
+      <a href="https://www.macautower.com.mo/" target="_blank" rel="noopener noreferrer" class="ticket-link" data-track="ticket" data-copy-zh="官方购票" data-copy-en="Official tickets">官方购票</a>
     </nav>
   </header>
 
-  <main>
-    <!-- 沉浸式首屏：真实照片背景 + 粒子与渐变遮罩 -->
-    <section class="hero" id="hero">
+  <main id="main-content">
+    <section class="hero" id="hero" aria-labelledby="hero-title">
       <div class="hero__media" aria-hidden="true">
-        <img
-          class="hero__photo"
-          src="assets/macauTowerBg.jpg"
-          alt=""
-          width="1920"
-          height="1080"
-          loading="eager"
-          decoding="async"
-          fetchpriority="high"
-        />
+        <img class="hero__photo" src="assets/macauTowerBg.jpg" alt="" width="2121" height="1414" loading="eager" decoding="async" fetchpriority="high">
         <div class="hero__media-overlay"></div>
       </div>
-      <canvas id="particle-canvas" aria-hidden="true"></canvas>
-      <div class="hero__glow" aria-hidden="true"></div>
+      <canvas id="particle-canvas" hidden aria-hidden="true"></canvas>
+      <canvas id="tower-gravity-canvas" aria-hidden="true"></canvas>
+      <div class="hero__axis-line" aria-hidden="true"></div>
+      <p class="hero__rail" aria-hidden="true">MACAU · NIGHT ROUTE · 01</p>
+
       <div class="hero__main">
         <div class="hero__content">
-          <p class="hero__eyebrow" data-i18n="heroEyebrow">AI Destination Agent</p>
-          <h1 class="hero__title" data-i18n="heroTitle">Meet Macau Tower — Your AI Destination Agent</h1>
-          <p class="hero__subtitle" data-i18n="heroSubtitle">
-            不是一座等待被浏览的地标，而是一位会与你互动、为你规划、陪你探索澳门的智能旅游管家。
-          </p>
+          <p class="hero__eyebrow" data-copy-zh="澳门塔 · AI 目的地向导" data-copy-en="Macau Tower · AI destination host">澳门塔 · AI 目的地向导</p>
+          <h1 class="hero__title" id="hero-title" data-copy-zh="从塔上，重新看见澳门。" data-copy-en="See Macau again, from above.">从塔上，重新看见澳门。</h1>
+          <p class="hero__subtitle" data-copy-zh="告诉塔塔你的时间、同行人与偏好。从黄昏到夜景，为你整理一条刚刚好的澳门塔路线。" data-copy-en="Tell Tota your timing, companions, and pace. Get a Macau Tower route shaped around sunset, night views, and you.">告诉塔塔你的时间、同行人与偏好。从黄昏到夜景，为你整理一条刚刚好的澳门塔路线。</p>
           <div class="hero__cta">
-            <button type="button" class="btn-primary" id="cta-explore" data-i18n="ctaExplore">开始探索</button>
-            <button type="button" class="btn-secondary" id="cta-chat" data-i18n="ctaChat">和澳门塔聊聊</button>
+            <button type="button" class="btn-secondary" id="cta-explore" data-copy-zh="先看看怎么玩" data-copy-en="Explore experiences">先看看怎么玩</button>
+            <button type="button" class="btn-primary" id="cta-chat" data-copy-zh="让塔塔规划行程" data-copy-en="Plan with Tota">让塔塔规划行程</button>
           </div>
+          <ul class="hero__promise" aria-label="可提供的规划内容">
+            <li data-copy-zh="半日路线" data-copy-en="Half-day route">半日路线</li>
+            <li data-copy-zh="夜景时段" data-copy-en="Night-view timing">夜景时段</li>
+            <li data-copy-zh="同行建议" data-copy-en="Group-fit advice">同行建议</li>
+          </ul>
         </div>
+
         <figure class="hero__tota">
-          <img
-            class="hero__tota-img"
-            src="assets/tota-agent.png"
-            alt="Tota — 澳门塔目的地 Agent 虚拟形象"
-            width="900"
-            height="1200"
-            loading="eager"
-            decoding="async"
-          />
+          <img class="hero__tota-img" src="assets/tota-cutout-clean.png" alt="塔塔 Tota，澳门塔目的地向导" width="1117" height="1408" loading="eager" decoding="async">
+          <figcaption class="hero__route-preview">
+            <span class="route-preview__label">TOTA'S PICK</span>
+            <strong data-copy-zh="黄昏入场 · 夜景收尾" data-copy-en="Sunset arrival · Night-view finale">黄昏入场 · 夜景收尾</strong>
+            <span data-copy-zh="适合第一次来澳门塔的两小时路线" data-copy-en="A two-hour route for first-time visitors">适合第一次来澳门塔的两小时路线</span>
+          </figcaption>
         </figure>
       </div>
-      <!-- 底部快捷提问浮层 -->
+
       <div class="hero__quick" id="hero-quick">
-        <p class="hero__quick-label" data-i18n="quickLabel">试试这样问</p>
+        <p class="hero__quick-label" data-copy-zh="从一句话开始" data-copy-en="Start with one line">从一句话开始</p>
         <div class="hero__quick-chips" id="hero-quick-chips"></div>
       </div>
-      <p class="hero__photo-credit" data-i18n="heroPhotoCredit">背景图：澳门塔实景（项目素材）</p>
+      <p class="hero__photo-credit" data-copy-zh="澳门塔实景 · 项目素材" data-copy-en="Macau Tower photography · project asset">澳门塔实景 · 项目素材</p>
     </section>
 
-    <!-- 澳门塔亮点 -->
-    <section class="section highlights" id="highlights">
-      <div class="section__head">
-        <h2 data-i18n="highlightsTitle">澳门塔亮点</h2>
-        <p class="section__desc" data-i18n="highlightsDesc">观景、夜景、冒险与城市故事，一站掌握。</p>
+    <section class="chapter agent" id="agent" aria-labelledby="agent-title">
+      <div class="chapter__intro reveal">
+        <p class="chapter__label">PLAN WITH TOTA</p>
+        <div>
+          <h2 id="agent-title" data-copy-zh="把想法说出来，路线就会成形。" data-copy-en="Say what you want. Watch the route take shape.">把想法说出来，路线就会成形。</h2>
+          <p data-copy-zh="不用先研究攻略。告诉塔塔你有多少时间、和谁出发、想要怎样的节奏。" data-copy-en="No need to research first. Share your time, companions, and preferred pace.">不用先研究攻略。告诉塔塔你有多少时间、和谁出发、想要怎样的节奏。</p>
+        </div>
       </div>
-      <div class="highlight-grid" id="highlight-cards"></div>
+
+      <div class="agent-layout reveal">
+        <div class="agent__panel" id="agent-chat">
+          <div class="agent__identity">
+            <div class="agent__mascot-wrap">
+              <img class="agent__mascot" src="assets/tota-chibi.png" width="1024" height="1024" alt="">
+              <span class="agent__status" aria-hidden="true"></span>
+            </div>
+            <div class="agent__identity-text">
+              <p class="agent__name" data-i18n="agentName">塔塔 Tota</p>
+              <p class="agent__tagline" data-i18n="agentTagline">澳门塔 AI 旅游管家 · 虚拟形象</p>
+            </div>
+            <span class="agent__online" data-copy-zh="可以开始规划" data-copy-en="Ready to plan">可以开始规划</span>
+          </div>
+
+          <div class="agent__quick" id="agent-quick" aria-label="快捷问题"></div>
+          <div class="chat" id="chat" role="log" aria-live="polite" aria-relevant="additions"></div>
+          <form class="chat-input" id="chat-form" autocomplete="off">
+            <label class="sr-only" for="chat-input" data-copy-zh="告诉塔塔你的出行需求" data-copy-en="Tell Tota what you need">告诉塔塔你的出行需求</label>
+            <input type="text" id="chat-input" placeholder="例如：周六下午，两个人，想看夜景和拍照" maxlength="500" aria-describedby="agent-hint">
+            <button type="submit" class="btn-send" id="chat-send" aria-label="发送">
+              <span data-i18n="send">发送</span><span aria-hidden="true">↗</span>
+            </button>
+          </form>
+          <p class="agent__hint" id="agent-hint" data-i18n="agentHint">票价与开放时段以官方渠道为准；此处为体验演示，不含实时票务数据。</p>
+        </div>
+
+        <aside class="planner-aside" id="planner-preview" aria-live="polite">
+          <div class="planner-aside__head">
+            <span>LIVE ROUTE</span>
+            <span class="planner-aside__pulse" aria-hidden="true"></span>
+          </div>
+          <div class="planner-aside__body">
+            <p class="planner-aside__kicker" data-copy-zh="你的路线会在这里成形" data-copy-en="Your route will take shape here">你的路线会在这里成形</p>
+            <h3 data-copy-zh="先告诉塔塔三个线索" data-copy-en="Start with three clues">先告诉塔塔三个线索</h3>
+            <ol class="route-clues">
+              <li><span>01</span><div><strong data-copy-zh="有多少时间" data-copy-en="How much time">有多少时间</strong><small data-copy-zh="两小时、半天或一整晚" data-copy-en="Two hours, half a day, or an evening">两小时、半天或一整晚</small></div></li>
+              <li><span>02</span><div><strong data-copy-zh="和谁同行" data-copy-en="Who is coming">和谁同行</strong><small data-copy-zh="独行、约会、朋友或家人" data-copy-en="Solo, date, friends, or family">独行、约会、朋友或家人</small></div></li>
+              <li><span>03</span><div><strong data-copy-zh="最想留下什么" data-copy-en="What matters most">最想留下什么</strong><small data-copy-zh="夜景、照片、挑战或一顿饭" data-copy-en="Views, photos, thrills, or dinner">夜景、照片、挑战或一顿饭</small></div></li>
+            </ol>
+          </div>
+          <p class="planner-aside__foot">MACAU TOWER · PERSONAL ROUTE</p>
+        </aside>
+      </div>
     </section>
 
-    <!-- Agent 对话区 -->
-    <section class="section agent" id="agent">
-      <div class="section__head">
-        <h2 data-i18n="agentTitle">与 Agent 对话</h2>
-        <p class="section__desc" data-i18n="agentDesc">快捷问题或自由输入，获取个性化玩法与路线建议。</p>
-      </div>
-      <div class="agent__panel" id="agent-chat">
-        <div class="agent__identity">
-          <div class="agent__mascot-wrap">
-            <img
-              class="agent__mascot"
-              src="assets/tota-chibi.png"
-              width="120"
-              height="120"
-              alt=""
-            />
-            <span class="agent__mascot-ring" aria-hidden="true"></span>
-          </div>
-          <div class="agent__identity-text">
-            <p class="agent__name" data-i18n="agentName">塔塔 Tota</p>
-            <p class="agent__tagline" data-i18n="agentTagline">澳门塔 AI 旅游管家 · 虚拟形象</p>
-          </div>
+    <section class="chapter highlights" id="highlights" aria-labelledby="highlights-title">
+      <div class="chapter__intro chapter__intro--compact reveal">
+        <p class="chapter__label">WHY THE TOWER</p>
+        <div>
+          <h2 id="highlights-title" data-i18n="highlightsTitle">澳门塔亮点</h2>
+          <p data-i18n="highlightsDesc">观景、夜景、冒险与城市故事，一站掌握。</p>
         </div>
-        <div class="agent__quick" id="agent-quick"></div>
-        <div class="chat" id="chat" role="log" aria-live="polite" aria-relevant="additions"></div>
-        <form class="chat-input" id="chat-form" autocomplete="off">
-          <input type="text" id="chat-input" data-i18n-placeholder="inputPlaceholder" placeholder="描述你的时间、同行人与偏好…" maxlength="500" />
-          <button type="submit" class="btn-send" id="chat-send" aria-label="发送">
-            <span data-i18n="send">发送</span>
-          </button>
-        </form>
-        <p class="agent__hint" data-i18n="agentHint">票价与开放时段以官方渠道为准；此处为体验演示，不含实时票务数据。</p>
       </div>
+      <div class="highlight-grid reveal" id="highlight-cards"></div>
     </section>
 
-    <!-- 场景化导览 + 纪念时刻（同一整页模块） -->
-    <section class="section guide-memento" id="guide">
-      <div class="guide-memento__inner">
-        <div class="section__head guide-memento__head">
-          <h2 data-i18n="guideTitle">场景化导览</h2>
-          <p class="section__desc" data-i18n="guideDesc">黄昏、夜景与拍照点位，提前感受澳门塔氛围。</p>
+    <section class="chapter guide" id="guide" aria-labelledby="guide-title">
+      <div class="chapter__intro reveal">
+        <p class="chapter__label">SCENE NOTES</p>
+        <div>
+          <h2 id="guide-title" data-i18n="guideTitle">场景化导览</h2>
+          <p data-i18n="guideDesc">黄昏、夜景与拍照点位，提前感受澳门塔氛围。</p>
         </div>
-        <div class="guide-scroll" id="guide-cards"></div>
+      </div>
+      <div class="guide-scroll reveal" id="guide-cards" tabindex="0" aria-label="澳门塔场景"></div>
 
-        <div class="section__head guide-memento__head guide-memento__head--secondary">
-          <h2 data-i18n="mementoTitle">生成我的澳门塔时刻</h2>
-          <p class="section__desc" data-i18n="mementoDesc">基于你的对话偏好，生成可分享的纪念文案与卡片。</p>
-        </div>
-        <div class="memento__inner">
-          <div>
-            <button type="button" class="btn-primary" id="btn-memento" data-i18n="mementoBtn">生成纪念卡</button>
-          </div>
-          <div class="memento__cta-links">
-            <span data-i18n="convertLabel">转化入口</span>
-            <a href="https://www.macautower.com.mo/" target="_blank" rel="noopener noreferrer" class="link-pill" data-track="ticket" data-i18n="linkOfficial">官网 / 门票</a>
-            <a href="#agent" class="link-pill js-scroll-agent" data-track="agent" data-i18n="linkAgent">继续问 Agent</a>
-          </div>
+      <a class="art-callout reveal" href="light-field-lab.html" target="_blank" rel="noopener">
+        <span class="art-callout__canvas" aria-hidden="true"><canvas id="art-callout-canvas"></canvas></span>
+        <span class="art-callout__copy">
+          <small>GENERATIVE NIGHT STUDY</small>
+          <strong data-copy-zh="进入「塔身引力」光迹实验室" data-copy-en="Enter the Tower Gravity light-field lab">进入「塔身引力」光迹实验室</strong>
+          <span data-copy-zh="用种子、引力与城市光色，生成属于你的澳门夜景。" data-copy-en="Use seeds, gravity, and city light to generate your own Macau night.">用种子、引力与城市光色，生成属于你的澳门夜景。</span>
+        </span>
+        <span class="art-callout__arrow" aria-hidden="true">↗</span>
+      </a>
+    </section>
+
+    <section class="moment" id="moment" aria-labelledby="moment-title">
+      <div class="moment__media" aria-hidden="true"><img src="assets/macauTowerBg.jpg" alt="" width="2121" height="1414" loading="lazy" decoding="async"></div>
+      <div class="moment__inner reveal">
+        <p class="chapter__label">KEEP THE MOMENT</p>
+        <h2 id="moment-title" data-i18n="mementoTitle">生成我的澳门塔时刻</h2>
+        <p data-i18n="mementoDesc">基于你的对话偏好，生成可分享的纪念文案与卡片。</p>
+        <div class="moment__actions">
+          <button type="button" class="btn-primary" id="btn-memento" data-i18n="mementoBtn">生成纪念卡</button>
+          <a href="https://www.macautower.com.mo/" target="_blank" rel="noopener noreferrer" data-track="ticket" data-i18n="linkOfficial">官网 / 门票</a>
+          <a href="#agent" class="js-scroll-agent" data-track="agent" data-i18n="linkAgent">继续问 Agent</a>
         </div>
       </div>
     </section>
   </main>
 
-  <!-- 纪念卡弹层 -->
+  <footer class="site-footer">
+    <div class="site-footer__brand">
+      <span class="logo__axis" aria-hidden="true"></span>
+      <div><strong>Macau Tower</strong><span>DESTINATION AGENT · TOTA</span></div>
+    </div>
+    <p data-copy-zh="这是目的地 Agent 体验演示。票价、开放时间与项目安排请以澳门塔官方信息为准。" data-copy-en="This is a destination-agent demo. Check official Macau Tower information for tickets, hours, and activity schedules.">这是目的地 Agent 体验演示。票价、开放时间与项目安排请以澳门塔官方信息为准。</p>
+    <div class="site-footer__links">
+      <a href="#hero" data-copy-zh="回到顶部" data-copy-en="Back to top">回到顶部</a>
+      <a href="light-field-lab.html" data-copy-zh="光迹实验室" data-copy-en="Light-field lab">光迹实验室</a>
+      <a href="https://www.macautower.com.mo/" target="_blank" rel="noopener noreferrer" data-copy-zh="澳门塔官网" data-copy-en="Official website">澳门塔官网</a>
+    </div>
+  </footer>
+
   <div class="modal" id="modal-memento" hidden>
     <div class="modal__backdrop" data-close-modal></div>
-    <div class="modal__dialog" role="dialog" aria-labelledby="memento-dialog-title">
-      <button type="button" class="modal__close" data-close-modal aria-label="关闭">&times;</button>
+    <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="memento-dialog-title" tabindex="-1">
+      <button type="button" class="modal__close" data-close-modal aria-label="关闭"><span aria-hidden="true">×</span></button>
+      <p class="modal__eyebrow">YOUR MACAU TOWER MOMENT</p>
       <h3 id="memento-dialog-title" data-i18n="mementoModalTitle">你的澳门塔时刻</h3>
       <div class="memento-card" id="memento-card-preview">
         <div class="memento-card__brand">Macau Tower</div>
@@ -159,6 +220,15 @@
   </div>
 
   <script src="agent-config.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=20260815-route3"></script>
+  <script src="design.js"></script>
 </body>
 </html>
+
+
+
+
+
+
+
+
