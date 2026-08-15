@@ -1,178 +1,263 @@
-# Macau Tower Destination Agent
+# 澳门塔目的地 Agent
 
-澳门塔目的地演示站点：沉浸式首页、亮点导览、与 **Agent（智能对话）** 交互。完整体验 **LLM（大语言模型）+ RAG（检索增强生成）** 需要同时启动本地 API 服务并配置上游密钥。
+> 面向澳门塔半日游场景的 AI 旅行规划产品原型。它将游客的自然语言需求转化为可执行的时间线、地点卡片与行动建议，而不是只返回一段泛化的旅行攻略。
 
----
+[![Portfolio Project](https://img.shields.io/badge/Portfolio-AI%20Product-d24b36)](https://lucky-hilda.github.io/hilda_TotaWeb/)
+![Role](https://img.shields.io/badge/Role-AI%20Product%20Manager-111827)
+![Status](https://img.shields.io/badge/Status-Deployed-1f8f6a)
 
-## 重要文件索引
-
-### Markdown 文档（建议优先阅读顺序）
-
-| 文件 | 说明 |
-|------|------|
-| **`README.md`** | 本文件：运行方式、功能概览、目录说明。 |
-| **`macau_tower_destination_agent_prd_v1.md`** | **PRD（产品需求文档）**：愿景、用户旅程、功能清单、Agent 流程、提示词与评估等非功能要求。 |
-| **`macau_tower_implementation_vs_prd_v1.md`** | **实现对照说明**：当前网页/API 相对 PRD 的覆盖情况，以及 **Agent 链路**（前端本地规则 / 远程 RAG+LongCat / 失败兜底）的逐步说明。 |
-| **`macau_tower_pm_signals_v1.md`** | **PM 信号**：北极星与核心指标、埋点 Schema（含 `session_id` / `reply_path` / `link_kind`）、漏斗、P0 缺口假设与验证、用户画像与路线图（RICE、MVP 边界）。 |
-| **`macau_tower_demo_kb_v1.md`** | **RAG 知识库正文**：按 `---` 分节；后端 `rag.py` 做 BM25 检索，将片段注入对话 system prompt。**改内容即可影响 Agent 回答依据（需在常识范围内，勿当实时票务数据）**。 |
-| **`DEPLOY.md`** | **部署上线说明**：前后端拆分部署、`window.__AGENT_API__`、环境变量、Docker 与自检清单（需自行在云控制台操作）。 |
-
-### 前端（`web/`）
-
-| 文件 / 目录 | 说明 |
-|-------------|------|
-| **`web/index.html`** | 单页结构：首屏、亮点、Agent 对话、导览+纪念、模态框等。 |
-| **`web/app.js`** | 前端逻辑：中英切换、快捷问题、对话与 **`sendUserMessage`**、本地意图/路线卡/FAQ、远程 `fetch /api/chat`、埋点、滚动与 snap 相关行为。 |
-| **`web/agent-config.js`** | 可选：设置 `window.__AGENT_API__` 指向公网 API；GitHub Pages 部署可由 Actions 根据 Secret 覆盖。 |
-| **`web/styles.css`** | 全局样式：深色主题、整页 scroll-snap、组件布局。 |
-| **`web/assets/`** | 静态资源：如 `macauTowerBg.jpg`、`tota-agent.png`、`tota-chibi.png`、`mascot-tower.svg` 等。 |
-| **`.github/workflows/deploy-github-pages.yml`** | 推送 `main`/`master` 时将 **`web/`** 部署到 **GitHub Pages**；详见 **`DEPLOY.md` 第 5 节**。 |
-
-### 后端（`server/`）
-
-| 文件 | 说明 |
-|------|------|
-| **`server/main.py`** | FastAPI 应用：`GET /api/health`、`POST /api/chat`（RAG 检索 + 调用 LongCat OpenAI 兼容接口）。 |
-| **`server/rag.py`** | 读取仓库根目录 **`macau_tower_demo_kb_v1.md`**，建 BM25 索引，`retrieve_for_query` 供 `main.py` 使用。 |
-| **`server/requirements.txt`** | Python 依赖。 |
-| **`server/.env.example`** | 环境变量模板；复制为 **`server/.env`** 并填写密钥。 |
-| **`server/.env`** | **本地密钥（勿提交版本库）**；含 `LONGCAT_API_KEY` 等。 |
-| **`server/run.bat`** | Windows 下启动 uvicorn 的示例脚本（可能含本机 conda 环境名，通用用法见下文命令行）。 |
-| **`server/test_longcat_upstream.py`** | 用于探测 LongCat 上游是否可用的测试脚本。 |
-| **`server/.gitignore`** | 忽略 `.env` 等不应入库的文件。 |
-| **`Dockerfile`**（仓库根目录） | 可选：构建仅含 API 的容器镜像（内含 `macau_tower_demo_kb_v1.md`），详见 **`DEPLOY.md`**。 |
-
-上线步骤概要见 **`DEPLOY.md`**（无法代你完成云平台登录与点击部署）。
+**[在线体验](https://lucky-hilda.github.io/hilda_TotaWeb/)** · **[查看源码](https://github.com/Lucky-Hilda/hilda_TotaWeb)**
 
 ---
 
-## 功能概览
+## 30 秒了解项目
 
-| 能力 | 说明 |
-|------|------|
-| 首页与导览 | 首屏、亮点卡片、场景化导览、纪念文案弹窗等，打开页面即可浏览。 |
-| **完整 Agent** | 对话走后端 `POST /api/chat`：从 `macau_tower_demo_kb_v1.md` **BM25 召回** 片段注入 system prompt，再调用 **LongCat** OpenAI 兼容接口生成回复。 |
-| 本地规则兜底 | 未启动后端、接口报错或未配置密钥时，前端会用内置规则生成路线卡/FAQ 等（与「真 Agent」体验不同）。 |
+第一次到澳门塔的游客通常会遇到三个问题：信息分散、时间有限、通用攻略难以匹配同行人数和体验偏好。
+
+本项目以“半日游路线规划”为核心任务，通过对话收集时间、人数和兴趣偏好，结合澳门塔本地知识库生成结构化路线，并在前端展示为直观的行程摘要、时间线和地点卡片。
+
+这不是一个只包装聊天接口的页面。项目重点解决的是：**如何把不稳定的模型回答，转化为用户可以理解、判断和执行的旅行计划。**
+
+### 项目信息
+
+| 项目维度 | 说明 |
+| --- | --- |
+| 项目类型 | AI 旅行规划 Agent / 求职作品集项目 |
+| 我的角色 | AI 产品经理、产品设计、前后端实现 |
+| 负责范围 | 独立完成需求分析、交互设计、视觉设计、Agent 方案、开发与部署验证 |
+| 目标用户 | 第一次到访澳门塔、时间有限、希望快速获得个性化路线的游客 |
+| 核心场景 | 半日游、情侣夜景、家庭出行、观景与拍照 |
+| 当前状态 | 可公开访问的产品原型 |
 
 ---
 
-## 完整体验 Agent（推荐流程）
+## 问题定义
 
-### 1. 环境准备
+传统旅游攻略擅长提供信息，却很难直接回答“我应该按什么顺序去、每一站停多久、现在该做什么”。直接接入大模型同样存在明显问题：
 
-- **Python** 3.10+（建议；需能安装 `requirements.txt` 中的依赖）
-- **LongCat API Key**：在 [LongCat](https://longcat.chat) 等平台申请，用于调用 OpenAI 兼容的 Chat Completions 接口
+- 回答篇幅长，用户需要自己重新整理；
+- 路线结构不固定，前端无法稳定展示；
+- 景点信息可能脱离本地场景；
+- 在线模型失败时，产品体验容易直接中断；
+- 对话结果缺少时间、地点和行动之间的清晰关系。
 
-### 2. 配置密钥
+因此，我将产品目标定义为：
 
-在仓库中的 `server` 目录：
+> 在一次简短对话后，为用户生成一条可信、清晰、可以立即执行的澳门塔游览路线。
 
-1. 复制 `server/.env.example` 为 `server/.env`
-2. 编辑 `server/.env`，将 `LONGCAT_API_KEY` 改为你自己的密钥（**勿将 `.env` 提交到版本库**）
+---
 
-可选环境变量（有默认值，一般不必改）：
+## 产品方案
 
-- `LONGCAT_API_URL`：默认 `https://api.longcat.chat/openai/v1/chat/completions`
-- `LONGCAT_MODEL`：默认 `LongCat-Flash-Chat`
+### 用户流程
 
-### 3. 安装依赖并启动 API
+~~~mermaid
+flowchart LR
+    A["表达需求"] --> B["识别时间、人数与偏好"]
+    B --> C["检索澳门塔本地知识"]
+    C --> D["生成结构化路线"]
+    D --> E["展示时间线与地点卡片"]
+    E --> F["继续追问或调整计划"]
+~~~
 
-在 `server` 目录下执行：
+### 核心体验
 
-```bash
+#### 1. 低门槛需求表达
+
+用户既可以直接输入旅行需求，也可以通过预设问题快速开始，例如“周六下午，两个人，想看夜景”。
+
+#### 2. 结构化路线生成
+
+模型不只生成自然语言，而是返回包含路线摘要、时间节点、地点、活动建议与提示信息的结构化数据。
+
+#### 3. 可视化行程呈现
+
+前端将路线转换为时间线和地点卡片，使用户可以快速扫读游览顺序、停留时间和每一站的重点。
+
+#### 4. 失败降级
+
+当上游模型不可用、超时或返回格式异常时，系统会提供明确的状态反馈，并保留本地演示能力，避免界面无响应。
+
+---
+
+## 关键产品决策
+
+| 产品问题 | 我的判断 | 解决方案 |
+| --- | --- | --- |
+| 大模型回答看起来丰富，但不方便执行 | 旅游规划的价值不在“写得多”，而在路线是否清晰 | 设计结构化路线协议，以时间节点组织结果 |
+| 模型输出格式存在波动 | 不能把模型原文直接交给前端 | 服务端校验并标准化数据，再由统一组件渲染 |
+| 通用模型可能缺少本地细节 | 路线需要澳门塔场景知识作为依据 | 引入本地知识库与 BM25 检索增强 |
+| 首次使用者不知道如何提问 | 空白输入框会增加启动成本 | 提供场景化问题建议和自然语言输入示例 |
+| 在线服务失败会破坏信任 | 降级也是产品体验的一部分 | 设计加载、错误提示与本地演示回复 |
+| AI 能力不应掩盖目的地氛围 | 旅行产品首先需要激发向往 | 建立“澳门夜景 × 目的地编辑部”的视觉方向 |
+
+---
+
+## Agent 与系统架构
+
+~~~mermaid
+flowchart LR
+    U["用户"] --> W["网页对话界面"]
+    W --> API["FastAPI Agent 服务"]
+    API --> RAG["澳门塔知识库 / BM25 检索"]
+    API --> LLM["SiliconFlow 大模型接口"]
+    RAG --> API
+    LLM --> API
+    API --> V["结构校验与标准化"]
+    V --> UI["路线摘要 / 时间线 / 地点卡片"]
+    API -. "异常" .-> F["本地演示与错误反馈"]
+    F --> UI
+~~~
+
+### 为什么采用结构化输出
+
+如果让在线模型直接返回 Markdown，前端只能显示一整段文字，而且不同模型、不同轮次的格式会发生变化。
+
+因此项目在模型和页面之间增加了一层结构化协议：后端要求模型输出约定字段，完成解析与校验后再交给前端。这样可以让在线模型和本地演示共用同一套路线卡片，也为后续加入地图、收藏和路线调整留下扩展空间。
+
+---
+
+## 技术实现
+
+### 前端
+
+- HTML、CSS、JavaScript
+- 响应式页面与自定义视觉系统
+- 对话状态、路线时间线和地点卡片渲染
+- 加载、错误、空状态与本地降级体验
+
+### Agent 服务
+
+- FastAPI
+- SiliconFlow OpenAI 兼容接口，模型可通过环境变量切换
+- 澳门塔本地知识库与 BM25 检索
+- Pydantic 数据校验
+- 结构化路线 JSON 与普通文本回复兼容
+
+### 部署
+
+- GitHub Pages：公开网站
+- Cloudflare Workers：在线服务部署与验证
+- 服务端环境变量管理 API 密钥，避免将密钥写入前端
+
+---
+
+## 产品验证
+
+当前阶段以产品原型与工程验收为主，不使用未经验证的业务增长数据。
+
+已完成的验证包括：
+
+- 公开网站可以访问；
+- 前端核心交互与响应式布局可用；
+- 在线模型接口可以完成对话请求；
+- 路线结构可被校验并渲染为卡片；
+- 模型异常时可以进入降级流程；
+- 前端与 Cloudflare Workers 部署流程通过。
+
+如果进入真实用户测试阶段，我会重点观察：
+
+| 指标 | 用途 |
+| --- | --- |
+| 路线生成完成率 | 判断用户是否顺利获得完整计划 |
+| 结构化输出有效率 | 衡量模型结果能否被系统稳定消费 |
+| 首次响应时间 | 判断等待过程是否影响使用意愿 |
+| 重新生成与追问率 | 识别路线与用户预期的差距 |
+| 地点卡片展开率 | 判断哪些信息真正受到关注 |
+| 任务后满意度 | 验证路线是否清晰、可信、可执行 |
+
+---
+
+## 我在项目中展示的能力
+
+- 从开放的“AI 旅游”概念收敛到澳门塔半日游核心任务；
+- 将用户需求拆解为时间、人数、偏好和出行场景；
+- 定义模型结构化输出协议与前端消费方式；
+- 将 RAG、异常处理和降级策略转化为具体产品体验；
+- 独立完成从需求、交互、视觉到开发和部署的完整闭环；
+- 在 AI 能力、信息可信度、页面表现力和实现成本之间做取舍。
+
+---
+
+## 本地运行
+
+### 1. 启动前端
+
+在项目根目录执行：
+
+~~~bash
+python -m http.server 4173 --directory web
+~~~
+
+打开 <http://127.0.0.1:4173/>。
+
+### 2. 安装并启动 Agent 服务
+
+~~~bash
 cd server
 python -m venv .venv
-# Windows PowerShell:
+
+# Windows PowerShell
 .\.venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
-```
+~~~
 
-启动成功后：
+健康检查：<http://127.0.0.1:8000/api/health>
 
-- 健康检查：<http://127.0.0.1:8000/api/health> 应返回 `{"status":"ok"}`
-- 对话接口：`POST http://127.0.0.1:8000/api/chat`（由前端自动调用）
+### 3. 配置模型
 
-> **说明**：若你使用仓库里的 `server/run.bat`，其中包含本机专用的 `conda activate` 环境名，可能与你的机器不一致；直接用上面的 `venv + uvicorn` 更通用。
+复制 <code>server/.env.example</code> 为 <code>server/.env</code>，并填写自己的 API Key：
 
-### 4. 打开前端页面
+~~~env
+MODEL_PROVIDER=SiliconFlow
+MODEL_API_URL=https://api.siliconflow.cn/v1/chat/completions
+MODEL_API_KEY=your_api_key
+MODEL_NAME=deepseek-ai/DeepSeek-V3.2
+MODEL_ENABLE_THINKING=false
+~~~
 
-前端默认请求 **`http://127.0.0.1:8000`**（见 `web/app.js` 中的 `API_BASE`）。
+请勿将真实 API Key 提交到 GitHub。模型名称可以替换为 SiliconFlow 当前可用的其他对话模型。
 
-为避免部分浏览器对 `file://` 访问本地接口的限制，建议用**静态 HTTP** 打开 `web` 目录，例如在**项目根目录**执行：
-
-```bash
-# Python 3
-python -m http.server 8080 --directory web
-```
-
-浏览器访问：<http://127.0.0.1:8080/>
-
-然后：点击 **「和澳门塔聊聊」** 或滚动到对话区，使用**快捷问题**或**自由输入**即可体验完整 Agent。
-
-### 5. 自定义 API 地址（可选）
-
-若后端不在本机 `8000` 端口，可在 `web/index.html` 中于引入 `app.js` **之前**设置：
-
-```html
-<script>window.__AGENT_API__ = "http://你的主机:端口";</script>
-```
+如果后端不在本机 8000 端口，可通过 <code>web/agent-config.js</code> 中的 <code>window.__AGENT_API__</code> 设置服务地址。
 
 ---
 
-## 仅前端 / 关闭远程 Agent（无需密钥）
+## 项目结构
 
-适合快速看界面与本地规则逻辑：
+~~~text
+.
+├── web/                                      # 产品页面、交互与视觉资源
+├── server/                                   # FastAPI、模型调用、RAG 与数据协议
+├── macau_tower_destination_agent_prd_v1.md   # 产品需求文档
+├── macau_tower_implementation_vs_prd_v1.md   # PRD 与实现对照
+├── macau_tower_pm_signals_v1.md              # 指标、埋点与路线图
+├── macau_tower_demo_kb_v1.md                 # RAG 本地知识库
+├── DEPLOY.md                                 # 部署说明
+└── README.md
+~~~
 
-1. **不启动**后端，或启动但未配置 `LONGCAT_API_KEY`（接口会 503，前端会走兜底）。
-2. 或在页面中关闭远程 Agent（在引入 `app.js` 之前）：
+### 延伸阅读
 
-```html
-<script>window.__USE_REMOTE_AGENT__ = false;</script>
-```
-
-此时对话完全由前端 `app.js` 内的规则与模板处理，**不会**调用 LongCat，也**没有** RAG 检索。
-
----
-
-## 项目结构（树状速览）
-
-更完整的说明见上文 **「重要文件索引」**。
-
-```
-macau_tower_destination_agent/
-├── README.md
-├── macau_tower_destination_agent_prd_v1.md    # PRD
-├── macau_tower_implementation_vs_prd_v1.md    # 实现对照 + Agent 链路
-├── macau_tower_pm_signals_v1.md               # PM 指标、埋点 Schema、路线图
-├── macau_tower_demo_kb_v1.md                  # RAG 知识库（勿随意移动或删空）
-├── DEPLOY.md、Dockerfile、.dockerignore       # 部署与容器（可选）
-├── web/
-│   ├── index.html、app.js、styles.css
-│   └── assets/
-└── server/
-    ├── main.py、rag.py、requirements.txt
-    ├── .env.example、.env（本地，勿提交）
-    ├── run.bat、test_longcat_upstream.py
-    └── .gitignore
-```
+- [产品需求文档](./macau_tower_destination_agent_prd_v1.md)
+- [PRD 与实现对照](./macau_tower_implementation_vs_prd_v1.md)
+- [指标、埋点与产品路线图](./macau_tower_pm_signals_v1.md)
+- [部署说明](./DEPLOY.md)
 
 ---
 
-## 常见问题
+## 后续迭代方向
 
-**对话一直像「模板/路线卡」，不像大模型在聊天？**  
-多半是未成功连上 `/api/chat`（后端未启、端口不对、密钥未配或上游报错）。可打开浏览器开发者工具 → **Network（网络）** 查看 `api/chat` 是否 200。
-
-**接口返回 503「未配置 LONGCAT_API_KEY」？**  
-检查 `server/.env` 是否在 `server` 目录下、变量名是否正确、服务是否重启。
-
-**知识库相关报错？**  
-`rag.py` 默认读取仓库根目录的 `macau_tower_demo_kb_v1.md`，请保持该文件存在且内容按文档中的 `---` 分节，以便切分为检索块。
+- 接入地图，把时间线升级为空间路线；
+- 支持拖动排序、删除地点和局部重新规划；
+- 引入营业时间、天气和活动等实时数据；
+- 建立路线质量评测集，持续测试事实准确性与可执行性；
+- 增加行程收藏、分享与多语言输出；
+- 通过真实用户测试验证路线理解成本和使用价值。
 
 ---
 
-## 免责声明
+## 项目说明
 
-演示站中的票价、开放时段等**不保证为实时数据**；出行请以澳门塔官方渠道为准。
-
+本项目是用于展示 AI 产品设计与落地能力的独立作品集项目，不代表澳门塔官方服务。景点开放时间、票务和现场安排可能变化，实际出行前请以官方信息为准。
