@@ -8,12 +8,13 @@
 
 import json
 import os
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 import rag
@@ -255,3 +256,173 @@ async def chat(req: ChatRequest) -> Dict[str, Any]:
         "provider": MODEL_PROVIDER,
     }
 
+
+def _stream_line(event: str, **data: Any) -> str:
+    """Serialize one NDJSON event without exposing internal reasoning."""
+    return json.dumps({"event": event, **data}, ensure_ascii=False) + "\n"
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest) -> StreamingResponse:
+    """Stream visible progress and text while keeping route JSON atomic."""
+    if not MODEL_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="未配置 MODEL_API_KEY；请在 Render Environment 中填写硅基流动 API Key",
+        )
+
+    messages = list(req.messages)
+    if not messages:
+        raise HTTPException(status_code=400, detail="messages 不能为空")
+
+    last_user = _last_user_text(messages)
+    if not last_user:
+        raise HTTPException(status_code=400, detail="缺少 user 消息")
+
+    wants_route = req.response_mode == "route"
+
+    async def event_stream() -> AsyncIterator[str]:
+        try:
+            yield _stream_line("status", stage="retrieving")
+            kb_context, sources = rag.retrieve_for_query(last_user, top_k=5)
+
+            system_content = _build_system_prompt(kb_context, req.response_mode)
+            outbound: List[dict[str, str]] = [
+                {"role": "system", "content": system_content}
+            ]
+            for message in messages:
+                if message.role != "system":
+                    outbound.append(
+                        {"role": message.role, "content": message.content}
+                    )
+
+            payload: Dict[str, Any] = {
+                "model": MODEL_NAME,
+                "messages": outbound,
+                "max_tokens": req.max_tokens or 1000,
+                "temperature": (
+                    req.temperature if req.temperature is not None else 0.7
+                ),
+                "enable_thinking": MODEL_ENABLE_THINKING,
+                "stream": True,
+            }
+            if wants_route:
+                payload["response_format"] = {"type": "json_object"}
+
+            headers = {
+                "Authorization": f"Bearer {MODEL_API_KEY}",
+                "Content-Type": "application/json",
+            }
+
+            yield _stream_line("status", stage="planning")
+            content_parts: List[str] = []
+            chunk_count = 0
+
+            timeout = httpx.Timeout(120.0, connect=30.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    MODEL_API_URL,
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    if response.status_code != 200:
+                        raw = await response.aread()
+                        detail = raw.decode("utf-8", errors="replace")[:500]
+                        yield _stream_line(
+                            "error",
+                            detail=(
+                                f"{MODEL_PROVIDER} 返回异常 HTTP "
+                                f"{response.status_code}: {detail}"
+                            ),
+                        )
+                        return
+
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or line.startswith(":") or line.startswith("event:"):
+                            continue
+                        raw = line[5:].strip() if line.startswith("data:") else line
+                        if raw == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(raw)
+                            choice = data["choices"][0]
+                            delta = choice.get("delta", {}).get("content")
+                            if delta is None:
+                                delta = choice.get("message", {}).get("content")
+                        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                            continue
+                        if not isinstance(delta, str) or not delta:
+                            continue
+
+                        content_parts.append(delta)
+                        chunk_count += 1
+                        if wants_route:
+                            if chunk_count % 12 == 0:
+                                yield _stream_line("heartbeat")
+                        else:
+                            yield _stream_line("delta", content=delta)
+
+            content = "".join(content_parts)
+            if not content.strip():
+                yield _stream_line(
+                    "error",
+                    detail=f"{MODEL_PROVIDER} 返回了空回复",
+                )
+                return
+
+            if wants_route:
+                yield _stream_line("status", stage="validating")
+                try:
+                    presentation = _validated_route(content)
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                    yield _stream_line(
+                        "error",
+                        detail=f"{MODEL_PROVIDER} 路线结构不完整，请重试: {exc!s}",
+                    )
+                    return
+
+                message_content = (
+                    f"{presentation['title']}：{presentation['summary']} "
+                    f"建议时段 {presentation['recommended_time']}，"
+                    f"{presentation['duration']}。"
+                )
+                yield _stream_line(
+                    "route",
+                    message={"role": "assistant", "content": message_content},
+                    presentation=presentation,
+                    sources=sources,
+                    model=MODEL_NAME,
+                    provider=MODEL_PROVIDER,
+                )
+            else:
+                yield _stream_line(
+                    "message",
+                    message={"role": "assistant", "content": content},
+                    presentation=None,
+                    sources=sources,
+                    model=MODEL_NAME,
+                    provider=MODEL_PROVIDER,
+                )
+
+            yield _stream_line("done")
+        except httpx.RequestError as exc:
+            yield _stream_line(
+                "error",
+                detail=f"{MODEL_PROVIDER} 请求失败: {exc!s}",
+            )
+        except Exception as exc:
+            yield _stream_line(
+                "error",
+                detail=f"生成回复时发生异常: {exc!s}",
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
