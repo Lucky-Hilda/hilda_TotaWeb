@@ -97,6 +97,14 @@
       faqGeneric:
         "我可以帮你梳理观景动线、夜景与拍照建议，或家庭轻松行程。你也可以直接说停留时长和同行人，我给出结构化路线卡。",
       localFallbackHint: "（线上模型暂不可用，已切换为本地演示回复）",
+      progressRouteSignal: "ROUTE SIGNAL",
+      progressAgentSignal: "AGENT SIGNAL",
+      progressWaking: "正在唤醒在线服务",
+      progressRetrieving: "正在检索澳门塔体验信息",
+      progressPlanning: "正在生成个性化建议",
+      progressValidating: "正在检查路线与时间",
+      progressRouteHint: "路线完成后会自动展开卡片",
+      progressTextHint: "回复会在生成时逐步出现",
     },
     en: {
       logo: "Macau Tower",
@@ -167,6 +175,14 @@
       faqGeneric:
         "I can help with viewing flow, night-view/photo timing, or a relaxed family plan. Tell me your duration and who you travel with, and I’ll return route cards.",
       localFallbackHint: "(Remote model unavailable — using local demo reply)",
+      progressRouteSignal: "ROUTE SIGNAL",
+      progressAgentSignal: "AGENT SIGNAL",
+      progressWaking: "Waking the online service",
+      progressRetrieving: "Looking up Macau Tower experiences",
+      progressPlanning: "Shaping a personalized answer",
+      progressValidating: "Checking route order and timing",
+      progressRouteHint: "Your route cards will open automatically",
+      progressTextHint: "The answer will appear as it is generated",
     },
   };
 
@@ -667,17 +683,111 @@
     chat.scrollTop = chat.scrollHeight;
   }
 
-  function showTyping() {
+  const PROGRESS_STAGE_INDEX = {
+    waking: 1,
+    retrieving: 2,
+    planning: 3,
+    validating: 4,
+  };
+
+  function progressLabel(stage) {
+    const labels = {
+      waking: "progressWaking",
+      retrieving: "progressRetrieving",
+      planning: "progressPlanning",
+      validating: "progressValidating",
+    };
+    return t(labels[stage] || labels.waking);
+  }
+
+  function showAgentProgress(wantsRoute) {
     const chat = document.getElementById("chat");
-    const id = "typing-" + Date.now();
+    const id = "response-" + Date.now();
     const bubble = document.createElement("div");
-    bubble.className = "msg__bubble typing";
-    bubble.innerHTML = "<span></span><span></span><span></span>";
+    bubble.className = "msg__bubble agent-progress";
+    bubble.setAttribute("role", "status");
+    bubble.setAttribute("aria-live", "polite");
+    bubble.setAttribute("aria-busy", "true");
+    bubble.dataset.route = String(Boolean(wantsRoute));
+    bubble.innerHTML =
+      '<span class="agent-progress__signal" aria-hidden="true"><i></i></span>' +
+      '<span class="agent-progress__copy">' +
+      '<span class="agent-progress__meta"><span>' +
+      escapeHtml(t(wantsRoute ? "progressRouteSignal" : "progressAgentSignal")) +
+      '</span><span data-progress-index>01 / ' +
+      (wantsRoute ? "04" : "03") +
+      '</span></span><strong data-progress-label>' +
+      escapeHtml(progressLabel("waking")) +
+      '</strong><small>' +
+      escapeHtml(t(wantsRoute ? "progressRouteHint" : "progressTextHint")) +
+      "</small></span>";
     const wrap = wrapAgentRow(bubble);
     wrap.id = id;
     chat.appendChild(wrap);
     chat.scrollTop = chat.scrollHeight;
     return id;
+  }
+
+  function updateAgentProgress(id, stage) {
+    const row = document.getElementById(id);
+    const bubble = row && row.querySelector(".agent-progress");
+    if (!bubble) return;
+    const label = bubble.querySelector("[data-progress-label]");
+    const index = bubble.querySelector("[data-progress-index]");
+    const wantsRoute = bubble.dataset.route === "true";
+    const total = wantsRoute ? 4 : 3;
+    const position = Math.min(PROGRESS_STAGE_INDEX[stage] || 1, total);
+    if (label) label.textContent = progressLabel(stage);
+    if (index) {
+      index.textContent =
+        String(position).padStart(2, "0") + " / " + String(total).padStart(2, "0");
+    }
+  }
+
+  function streamAgentDelta(id, delta) {
+    const row = document.getElementById(id);
+    const bubble = row && row.querySelector(".msg__bubble");
+    if (!bubble) return;
+    let copy = bubble.querySelector(".assistant-stream__copy");
+    if (!copy) {
+      bubble.className = "msg__bubble assistant-stream";
+      bubble.setAttribute("role", "status");
+      bubble.setAttribute("aria-live", "polite");
+      bubble.setAttribute("aria-busy", "true");
+      bubble.innerHTML =
+        '<span class="assistant-stream__copy"></span>' +
+        '<span class="assistant-stream__caret" aria-hidden="true"></span>';
+      copy = bubble.querySelector(".assistant-stream__copy");
+    }
+    copy.appendChild(document.createTextNode(delta));
+    const chat = document.getElementById("chat");
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function finalizeAgentText(id, content) {
+    const row = document.getElementById(id);
+    const bubble = row && row.querySelector(".msg__bubble");
+    if (!bubble) return;
+    bubble.className = "msg__bubble";
+    bubble.removeAttribute("role");
+    bubble.removeAttribute("aria-live");
+    bubble.setAttribute("aria-busy", "false");
+    bubble.innerHTML = formatAssistantHtml(content);
+    const chat = document.getElementById("chat");
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function finalizeAgentRoute(id, route) {
+    const row = document.getElementById(id);
+    const bubble = row && row.querySelector(".msg__bubble");
+    if (!row || !bubble) return;
+    const holder = document.createElement("div");
+    holder.innerHTML = routeJourneyHtml(route);
+    const routeBubble = holder.firstElementChild;
+    bubble.replaceWith(routeBubble);
+    bindCardActions(row);
+    const chat = document.getElementById("chat");
+    chat.scrollTop = chat.scrollHeight;
   }
 
   function removeTyping(id) {
@@ -776,18 +886,89 @@
     if (chat) chat.setAttribute("aria-busy", String(pending));
   }
 
+  async function readAgentStream(response, responseId) {
+    if (!response.body || typeof response.body.getReader !== "function") {
+      throw new Error("streaming response is not supported");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result = null;
+    let streamedText = "";
+    let finished = false;
+
+    function handleLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let event;
+      try {
+        event = JSON.parse(trimmed);
+      } catch {
+        return;
+      }
+
+      if (event.event === "status") {
+        updateAgentProgress(responseId, event.stage);
+      } else if (event.event === "delta" && typeof event.content === "string") {
+        streamedText += event.content;
+        streamAgentDelta(responseId, event.content);
+      } else if (event.event === "route" || event.event === "message") {
+        result = event;
+      } else if (event.event === "error") {
+        throw new Error(event.detail || "streaming request failed");
+      } else if (event.event === "done") {
+        finished = true;
+      }
+    }
+
+    while (!finished) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) handleLine(line);
+    }
+
+    buffer += decoder.decode();
+    if (buffer.trim()) handleLine(buffer);
+    if (!result && streamedText) {
+      result = {
+        event: "message",
+        message: { role: "assistant", content: streamedText },
+        presentation: null,
+      };
+    }
+    if (!result || !result.message || !result.message.content) {
+      throw new Error("empty assistant content");
+    }
+    return { data: result, streamed: streamedText.length > 0 };
+  }
+
+  async function requestLegacyChat(payload) {
+    const response = await fetch(API_BASE + "/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(errText || String(response.status));
+    }
+    return response.json();
+  }
+
   async function sendUserMessage(text) {
     const trimmed = (text || "").trim();
     if (!trimmed || chatPending) return;
+    const wantsRoute = isRouteRequest(trimmed);
     setChatPending(true);
     appendUserMessage(trimmed);
     chatHistory.push({ role: "user", content: trimmed });
 
-    const tid = showTyping();
-
     if (!USE_REMOTE_AGENT) {
       window.setTimeout(() => {
-        removeTyping(tid);
         const reply = processReply(trimmed);
         appendPureLocalReply(reply);
         analytics.track("message_round", { reply_path: "local_only" });
@@ -796,48 +977,65 @@
       return;
     }
 
-    let replyPath = "remote_ok";
+    const responseId = showAgentProgress(wantsRoute);
+    const payload = {
+      messages: chatHistory.slice(-20),
+      response_mode: wantsRoute ? "route" : "auto",
+      max_tokens: wantsRoute ? 1600 : 1000,
+      temperature: wantsRoute ? 0.45 : 0.7,
+    };
+
+    let replyPath = "remote_stream";
     try {
-      const res = await fetch(`${API_BASE}/api/chat`, {
+      let data;
+      let streamed = false;
+      const response = await fetch(API_BASE + "/api/chat/stream", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: chatHistory.slice(-20),
-          response_mode: isRouteRequest(trimmed) ? "route" : "auto",
-          max_tokens: isRouteRequest(trimmed) ? 1600 : 1000,
-          temperature: isRouteRequest(trimmed) ? 0.45 : 0.7,
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
+        body: JSON.stringify(payload),
       });
-      removeTyping(tid);
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText || String(res.status));
+
+      if (response.status === 404 || !response.body) {
+        replyPath = "remote_legacy";
+        data = await requestLegacyChat(payload);
+      } else {
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(errText || String(response.status));
+        }
+        const streamedResult = await readAgentStream(response, responseId);
+        data = streamedResult.data;
+        streamed = streamedResult.streamed;
       }
-      const data = await res.json();
+
       const content = data.message && data.message.content;
       if (content == null || content === "") {
         throw new Error("empty assistant content");
       }
       chatHistory.push({ role: "assistant", content });
+
       if (data.presentation && data.presentation.type === "route") {
         sessionContext.lastPlan = data.presentation;
-        const div = document.createElement("div");
-        div.innerHTML = routeJourneyHtml(data.presentation);
-        appendAgentMessage(div.firstElementChild, true);
+        finalizeAgentRoute(responseId, data.presentation);
         updatePlannerPreview(data.presentation);
         analytics.track("recommendation_shown", {
           count: data.presentation.stops.length,
-          source: "remote_structured",
+          source: "remote_structured_stream",
         });
       } else {
-        appendAgentMessage(formatAssistantHtml(content));
+        finalizeAgentText(responseId, content);
       }
+
       analytics.track("agent_api_success", {
         presentation: data.presentation ? data.presentation.type : "text",
+        streamed,
       });
     } catch (err) {
       replyPath = "remote_fallback";
-      removeTyping(tid);
+      removeTyping(responseId);
       analytics.track("agent_api_error", { message: String(err && err.message) });
       appendAgentMessage(escapeHtml(t("localFallbackHint")));
       const reply = processReply(trimmed);
@@ -1059,9 +1257,21 @@
     if (input) input.focus({ preventScroll: true });
   }
 
+  function warmAgentApi() {
+    if (!USE_REMOTE_AGENT) return;
+    void fetch(API_BASE + "/api/health", { cache: "no-store" })
+      .then((response) => {
+        analytics.track("agent_warmup", { ok: response.ok });
+      })
+      .catch(() => {
+        analytics.track("agent_warmup", { ok: false });
+      });
+  }
+
   function init() {
     analytics.track("page_view", { path: "/" });
     applyI18n();
+    window.setTimeout(warmAgentApi, 250);
     syncHeaderAnchorOffset();
     window.addEventListener("resize", () => syncHeaderAnchorOffset());
 
