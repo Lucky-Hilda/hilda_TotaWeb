@@ -27,6 +27,56 @@
   /** OpenAI 格式对话历史，供 /api/chat 使用 */
   let chatHistory = [];
   let chatPending = false;
+  const AGENT_STATE_KEY = "macau-tower-agent-state-v2";
+
+  function emptyAgentState() {
+    return {
+      constraints: {
+        date: null,
+        start_time: null,
+        duration: null,
+        companions: [],
+        preferences: [],
+        pace: null,
+        avoid: [],
+      },
+      current_plan: null,
+      revision: 0,
+      last_action: "chat",
+    };
+  }
+
+  function normalizeAgentState(value) {
+    const fallback = emptyAgentState();
+    if (!value || typeof value !== "object") return fallback;
+    const constraints =
+      value.constraints && typeof value.constraints === "object" ? value.constraints : {};
+    return {
+      constraints: {
+        date: constraints.date || null,
+        start_time: constraints.start_time || null,
+        duration: constraints.duration || null,
+        companions: Array.isArray(constraints.companions) ? constraints.companions : [],
+        preferences: Array.isArray(constraints.preferences) ? constraints.preferences : [],
+        pace: constraints.pace || null,
+        avoid: Array.isArray(constraints.avoid) ? constraints.avoid : [],
+      },
+      current_plan:
+        value.current_plan && value.current_plan.type === "route" ? value.current_plan : null,
+      revision: Number.isFinite(value.revision) ? value.revision : 0,
+      last_action: value.last_action || "chat",
+    };
+  }
+
+  function loadAgentState() {
+    try {
+      return normalizeAgentState(JSON.parse(sessionStorage.getItem(AGENT_STATE_KEY) || "null"));
+    } catch {
+      return emptyAgentState();
+    }
+  }
+
+  let agentState = loadAgentState();
 
   const I18N = {
     zh: {
@@ -100,10 +150,13 @@
       progressRouteSignal: "ROUTE SIGNAL",
       progressAgentSignal: "AGENT SIGNAL",
       progressWaking: "正在唤醒在线服务",
+      progressExtracting: "正在识别并合并旅行条件",
       progressRetrieving: "正在检索澳门塔体验信息",
       progressPlanning: "正在生成个性化建议",
+      progressRevising: "正在按新要求局部调整路线",
       progressValidating: "正在检查路线与时间",
-      progressRouteHint: "路线完成后会自动展开卡片",
+      progressRepairing: "发现冲突，正在自动修正路线",
+      progressRouteHint: "完成约束检查后会自动展开路线卡",
       progressTextHint: "回复会在生成时逐步出现",
     },
     en: {
@@ -178,10 +231,13 @@
       progressRouteSignal: "ROUTE SIGNAL",
       progressAgentSignal: "AGENT SIGNAL",
       progressWaking: "Waking the online service",
+      progressExtracting: "Reading and merging your trip constraints",
       progressRetrieving: "Looking up Macau Tower experiences",
       progressPlanning: "Shaping a personalized answer",
+      progressRevising: "Updating only the requested route details",
       progressValidating: "Checking route order and timing",
-      progressRouteHint: "Your route cards will open automatically",
+      progressRepairing: "Resolving a route constraint conflict",
+      progressRouteHint: "Route cards open after constraint checks pass",
       progressTextHint: "The answer will appear as it is generated",
     },
   };
@@ -189,6 +245,71 @@
   let lang = "zh";
   /** @type {{ intent: string, tags: string[], lastPlan?: object }} */
   let sessionContext = { intent: "", tags: [], lastPlan: null };
+
+  function saveAgentState(nextState) {
+    agentState = normalizeAgentState(nextState);
+    try {
+      sessionStorage.setItem(AGENT_STATE_KEY, JSON.stringify(agentState));
+    } catch {
+      // Session storage can be unavailable in privacy modes; in-memory state still works.
+    }
+    renderAgentMemory();
+  }
+
+  function constraintEntries() {
+    const constraints = agentState.constraints || {};
+    const scalarLabels =
+      lang === "en"
+        ? { date: "Date", start_time: "Arrival", duration: "Time", pace: "Pace" }
+        : { date: "日期", start_time: "到达", duration: "时长", pace: "节奏" };
+    const listLabels =
+      lang === "en"
+        ? { companions: "With", preferences: "Likes", avoid: "Avoid" }
+        : { companions: "同行", preferences: "偏好", avoid: "避开" };
+    const entries = [];
+    Object.keys(scalarLabels).forEach((key) => {
+      if (constraints[key]) entries.push({ key, value: constraints[key], label: scalarLabels[key] });
+    });
+    Object.keys(listLabels).forEach((key) => {
+      (constraints[key] || []).forEach((value) => entries.push({ key, value, label: listLabels[key] }));
+    });
+    return entries;
+  }
+
+  function renderAgentMemory() {
+    const panel = document.getElementById("agent-memory");
+    const list = document.getElementById("agent-memory-chips");
+    if (!panel || !list) return;
+    const entries = constraintEntries();
+    panel.hidden = entries.length === 0;
+    list.innerHTML = entries
+      .map(
+        (item) =>
+          '<button type="button" class="memory-chip" data-memory-key="' +
+          escapeHtml(item.key) +
+          '" data-memory-value="' +
+          escapeHtml(item.value) +
+          '" aria-label="' +
+          escapeHtml((lang === "en" ? "Remove " : "移除") + item.label + " " + item.value) +
+          '"><span>' +
+          escapeHtml(item.label) +
+          '</span><strong>' +
+          escapeHtml(item.value) +
+          '</strong><i aria-hidden="true">×</i></button>'
+      )
+      .join("");
+  }
+
+  function removeAgentConstraint(key, value) {
+    const constraints = agentState.constraints || {};
+    if (Array.isArray(constraints[key])) {
+      constraints[key] = constraints[key].filter((item) => item !== value);
+    } else {
+      constraints[key] = null;
+    }
+    saveAgentState(agentState);
+    analytics.track("agent_constraint_removed", { key });
+  }
 
   /** 内存埋点队列；track 自动附带 session、语言、版本，便于导出为上报 JSON */
   const analytics = {
@@ -537,7 +658,7 @@
     );
   }
 
-  function routeJourneyHtml(route) {
+  function routeJourneyHtml(route, agentMeta = {}) {
     const labels =
       lang === "en"
         ? {
@@ -549,6 +670,10 @@
             reminders: "Before you go",
             official: "Check official info",
             memento: "Create memento",
+            proof: "AGENT CHECK",
+            checked: "constraints passed",
+            changed: "What changed",
+            adjust: "Adjust this route",
           }
         : {
             ready: "路线已生成",
@@ -559,6 +684,10 @@
             reminders: "出发前留意",
             official: "查看官方信息",
             memento: "生成纪念卡",
+            proof: "AGENT 校验",
+            checked: "项约束检查通过",
+            changed: "本次改动",
+            adjust: "继续调整这条路线",
           };
     const stops = Array.isArray(route.stops) ? route.stops.slice(0, 6) : [];
     const stopHtml = stops
@@ -588,6 +717,44 @@
     const followUp = route.follow_up
       ? `<p class="route-follow-up">${escapeHtml(route.follow_up)}</p>`
       : "";
+    const validation = agentMeta.validation || {};
+    const passedChecks = Array.isArray(validation.checks)
+      ? validation.checks.filter((item) => item.passed).length
+      : 0;
+    const sourceCount = Array.isArray(agentMeta.sources) ? agentMeta.sources.length : 0;
+    const repaired = Number(validation.repair_attempts || 0);
+    const proof = `<section class="route-proof" aria-label="${escapeHtml(labels.proof)}">
+      <div class="route-proof__head"><span aria-hidden="true"></span><strong>${escapeHtml(labels.proof)}</strong></div>
+      <ul>
+        <li><b>${passedChecks}</b> ${escapeHtml(labels.checked)}</li>
+        <li><b>${sourceCount}</b> ${lang === "en" ? "knowledge references" : "条本地知识依据"}</li>
+        <li><b>${repaired}</b> ${lang === "en" ? "automatic repairs" : "次自动修复"}</li>
+      </ul>
+    </section>`;
+    const changeItems =
+      agentMeta.changes &&
+      agentMeta.changes.type === "revised" &&
+      Array.isArray(agentMeta.changes.items)
+        ? agentMeta.changes.items
+        : [];
+    const changes = changeItems.length
+      ? `<section class="route-changes"><strong>${escapeHtml(labels.changed)}</strong><ul>${changeItems
+          .map((item) => `<li>${escapeHtml(item)}</li>`)
+          .join("")}</ul></section>`
+      : "";
+    const adjustPrompts =
+      lang === "en"
+        ? ["Arrive 30 minutes later", "Make the pace more relaxed", "Avoid thrill activities"]
+        : ["晚到30分钟", "节奏更轻松", "避开刺激项目"];
+    const adjustments = `<section class="route-adjust">
+      <strong>${escapeHtml(labels.adjust)}</strong>
+      <div>${adjustPrompts
+        .map(
+          (prompt) =>
+            `<button type="button" class="js-agent-adjust" data-adjust-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`
+        )
+        .join("")}</div>
+    </section>`;
 
     return `<div class="msg__bubble msg__bubble--route">
       <article class="route-journey" aria-label="${escapeHtml(route.title)}">
@@ -600,10 +767,13 @@
             <div><dt>${escapeHtml(labels.duration)}</dt><dd>${escapeHtml(route.duration)}</dd></div>
             <div><dt>${escapeHtml(labels.pace)}</dt><dd>${escapeHtml(route.pace)}</dd></div>
           </dl>
+          ${proof}
         </header>
+        ${changes}
         <ol class="route-timeline">${stopHtml}</ol>
         ${reminders}
         ${followUp}
+        ${adjustments}
         <div class="route-journey__actions">
           <a href="https://www.macautower.com.mo/" target="_blank" rel="noopener noreferrer" data-track="route_ticket">${escapeHtml(
             labels.official
@@ -685,17 +855,23 @@
 
   const PROGRESS_STAGE_INDEX = {
     waking: 1,
+    extracting: 1,
     retrieving: 2,
     planning: 3,
+    revising: 3,
     validating: 4,
+    repairing: 5,
   };
 
   function progressLabel(stage) {
     const labels = {
       waking: "progressWaking",
+      extracting: "progressExtracting",
       retrieving: "progressRetrieving",
       planning: "progressPlanning",
+      revising: "progressRevising",
       validating: "progressValidating",
+      repairing: "progressRepairing",
     };
     return t(labels[stage] || labels.waking);
   }
@@ -720,7 +896,10 @@
       escapeHtml(progressLabel("waking")) +
       '</strong><small>' +
       escapeHtml(t(wantsRoute ? "progressRouteHint" : "progressTextHint")) +
-      "</small></span>";
+      '</small><ol class="agent-progress__steps" data-progress-steps>' +
+      '<li class="is-current" data-stage="waking">' +
+      escapeHtml(progressLabel("waking")) +
+      "</li></ol></span>";
     const wrap = wrapAgentRow(bubble);
     wrap.id = id;
     chat.appendChild(wrap);
@@ -735,12 +914,24 @@
     const label = bubble.querySelector("[data-progress-label]");
     const index = bubble.querySelector("[data-progress-index]");
     const wantsRoute = bubble.dataset.route === "true";
-    const total = wantsRoute ? 4 : 3;
+    const total = wantsRoute ? (stage === "repairing" ? 5 : 4) : 3;
     const position = Math.min(PROGRESS_STAGE_INDEX[stage] || 1, total);
     if (label) label.textContent = progressLabel(stage);
     if (index) {
       index.textContent =
         String(position).padStart(2, "0") + " / " + String(total).padStart(2, "0");
+    }
+    const steps = bubble.querySelector("[data-progress-steps]");
+    if (steps && !steps.querySelector('[data-stage="' + stage + '"]')) {
+      steps.querySelectorAll("li").forEach((item) => {
+        item.classList.remove("is-current");
+        item.classList.add("is-complete");
+      });
+      const item = document.createElement("li");
+      item.className = "is-current";
+      item.dataset.stage = stage;
+      item.textContent = progressLabel(stage);
+      steps.appendChild(item);
     }
   }
 
@@ -777,12 +968,12 @@
     chat.scrollTop = chat.scrollHeight;
   }
 
-  function finalizeAgentRoute(id, route) {
+  function finalizeAgentRoute(id, route, agentMeta = {}) {
     const row = document.getElementById(id);
     const bubble = row && row.querySelector(".msg__bubble");
     if (!row || !bubble) return;
     const holder = document.createElement("div");
-    holder.innerHTML = routeJourneyHtml(route);
+    holder.innerHTML = routeJourneyHtml(route, agentMeta);
     const routeBubble = holder.firstElementChild;
     bubble.replaceWith(routeBubble);
     bindCardActions(row);
@@ -806,6 +997,13 @@
       btn.addEventListener("click", () => {
         analytics.track("detail_click", {});
         void scrollToSnapSection("guide");
+      });
+    });
+    container.querySelectorAll(".js-agent-adjust").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const prompt = btn.dataset.adjustPrompt || btn.textContent;
+        analytics.track("route_adjust_click", { prompt });
+        sendUserMessage(prompt);
       });
     });
     // 带 data-track 的转化链路由 init 中 document 委托统一上报，避免与静态入口重复绑定
@@ -910,6 +1108,8 @@
 
       if (event.event === "status") {
         updateAgentProgress(responseId, event.stage);
+      } else if (event.event === "state" && event.agent_state) {
+        saveAgentState(event.agent_state);
       } else if (event.event === "delta" && typeof event.content === "string") {
         streamedText += event.content;
         streamAgentDelta(responseId, event.content);
@@ -962,7 +1162,14 @@
   async function sendUserMessage(text) {
     const trimmed = (text || "").trim();
     if (!trimmed || chatPending) return;
-    const wantsRoute = isRouteRequest(trimmed);
+    const wantsRoute =
+      isRouteRequest(trimmed) ||
+      Boolean(
+        agentState.current_plan &&
+          /改|调整|换|不要|避开|去掉|晚|早|提前|推迟|节奏|第二站|第三站|arrive|later|avoid|pace|replace/i.test(
+            trimmed
+          )
+      );
     setChatPending(true);
     appendUserMessage(trimmed);
     chatHistory.push({ role: "user", content: trimmed });
@@ -982,7 +1189,8 @@
       messages: chatHistory.slice(-20),
       response_mode: wantsRoute ? "route" : "auto",
       max_tokens: wantsRoute ? 1600 : 1000,
-      temperature: wantsRoute ? 0.45 : 0.7,
+      temperature: wantsRoute ? 0.35 : 0.7,
+      state: agentState,
     };
 
     let replyPath = "remote_stream";
@@ -1016,10 +1224,11 @@
         throw new Error("empty assistant content");
       }
       chatHistory.push({ role: "assistant", content });
+      if (data.agent_state) saveAgentState(data.agent_state);
 
       if (data.presentation && data.presentation.type === "route") {
         sessionContext.lastPlan = data.presentation;
-        finalizeAgentRoute(responseId, data.presentation);
+        finalizeAgentRoute(responseId, data.presentation, data);
         updatePlannerPreview(data.presentation);
         analytics.track("recommendation_shown", {
           count: data.presentation.stops.length,
@@ -1315,6 +1524,20 @@
         link_kind: a.getAttribute("data-track") || "unknown",
       });
     });
+
+    const memory = document.getElementById("agent-memory");
+    if (memory) {
+      memory.addEventListener("click", (e) => {
+        const chip = e.target && e.target.closest && e.target.closest(".memory-chip");
+        if (chip) removeAgentConstraint(chip.dataset.memoryKey, chip.dataset.memoryValue);
+        const clear = e.target && e.target.closest && e.target.closest("[data-clear-memory]");
+        if (clear) {
+          saveAgentState(emptyAgentState());
+          analytics.track("agent_memory_cleared", {});
+        }
+      });
+    }
+    renderAgentMemory();
 
     document.getElementById("chat-form").addEventListener("submit", (e) => {
       e.preventDefault();

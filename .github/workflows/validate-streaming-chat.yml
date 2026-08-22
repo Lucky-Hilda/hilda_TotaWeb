@@ -31,7 +31,7 @@ jobs:
         run: |
           python -m py_compile server/main.py server/rag.py
           python -c "import json,sys; sys.path.insert(0,'server'); import main; route={'type':'route','title':'Test','summary':'Test summary','recommended_time':'17:00–20:00','duration':'3 hours','pace':'relaxed','stops':[{'time':'17:00','duration':'30 min','title':'A','description':'A stop','tip':''},{'time':'17:30','duration':'30 min','title':'B','description':'B stop','tip':''},{'time':'18:00','duration':'30 min','title':'C','description':'C stop','tip':''}],'reminders':[],'follow_up':''}; assert main._validated_route(json.dumps(route))['type']=='route'; assert json.loads(main._stream_line('status',stage='planning'))['stage']=='planning'"
-          python -m unittest server/test_streaming.py
+          python -m unittest server/test_streaming.py server/test_agent_workflow.py -v
 
       - name: Set up Node
         uses: actions/setup-node@v4

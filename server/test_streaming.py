@@ -127,8 +127,10 @@ class StreamingChatTests(unittest.TestCase):
         response = asyncio.run(main.chat_stream(request))
         events = asyncio.run(collect_events(response))
 
-        self.assertEqual(events[0], {"event": "status", "stage": "retrieving"})
-        self.assertEqual(events[1], {"event": "status", "stage": "planning"})
+        self.assertEqual(events[0], {"event": "status", "stage": "extracting"})
+        self.assertEqual(events[1]["event"], "state")
+        self.assertEqual(events[2], {"event": "status", "stage": "retrieving"})
+        self.assertEqual(events[3], {"event": "status", "stage": "planning"})
         self.assertEqual(
             "".join(item["content"] for item in events if item["event"] == "delta"),
             "澳门塔适合在黄昏前抵达。",
@@ -156,10 +158,17 @@ class StreamingChatTests(unittest.TestCase):
         stages = [
             item["stage"] for item in events if item["event"] == "status"
         ]
-        self.assertEqual(stages, ["retrieving", "planning", "validating"])
+        self.assertEqual(
+            stages,
+            ["extracting", "retrieving", "planning", "validating"],
+        )
         route_event = next(item for item in events if item["event"] == "route")
         self.assertEqual(route_event["presentation"]["type"], "route")
         self.assertEqual(len(route_event["presentation"]["stops"]), 3)
+        self.assertTrue(route_event["validation"]["passed"])
+        self.assertEqual(route_event["agent_state"]["constraints"]["date"], "周六")
+        self.assertEqual(route_event["changes"]["type"], "created")
+        self.assertGreaterEqual(len(route_event["trace"]), 3)
         self.assertEqual(events[-1]["event"], "done")
 
 
