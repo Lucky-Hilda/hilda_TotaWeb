@@ -62,6 +62,10 @@ class AgentWorkflowTests(unittest.TestCase):
         self.assertNotIn("冒险", shifted.preferences)
         self.assertTrue(any("17:00" in item for item in shifted_changes))
 
+        mixed, _ = main.extract_trip_constraints("想看夜景和拍照，但不要高空刺激项目")
+        self.assertEqual(mixed.preferences, ["夜景", "拍照"])
+        self.assertEqual(mixed.avoid, ["高空刺激"])
+
     def test_route_validator_catches_real_constraint_conflicts(self):
         broken = copy.deepcopy(ROUTE)
         broken["stops"][1]["title"] = broken["stops"][0]["title"]
