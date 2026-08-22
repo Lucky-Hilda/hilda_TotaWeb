@@ -111,6 +111,17 @@
           </div>
 
           <div class="agent__quick" id="agent-quick" aria-label="快捷问题"></div>
+          <section class="agent-memory" id="agent-memory" aria-labelledby="agent-memory-title" hidden>
+            <div class="agent-memory__head">
+              <div>
+                <span>TRIP MEMORY</span>
+                <strong id="agent-memory-title" data-copy-zh="塔塔记住了" data-copy-en="Tota remembers">塔塔记住了</strong>
+              </div>
+              <button type="button" data-clear-memory data-copy-zh="清空条件" data-copy-en="Clear">清空条件</button>
+            </div>
+            <div class="agent-memory__chips" id="agent-memory-chips"></div>
+            <p data-copy-zh="点按任一条件即可移除；下一次规划会继续使用其余条件。" data-copy-en="Remove any value with one tap. The next plan keeps the rest.">点按任一条件即可移除；下一次规划会继续使用其余条件。</p>
+          </section>
           <div class="chat" id="chat" role="log" aria-live="polite" aria-relevant="additions"></div>
           <form class="chat-input" id="chat-form" autocomplete="off">
             <label class="sr-only" for="chat-input" data-copy-zh="告诉塔塔你的出行需求" data-copy-en="Tell Tota what you need">告诉塔塔你的出行需求</label>
@@ -220,7 +231,7 @@
   </div>
 
   <script src="agent-config.js"></script>
-  <script src="app.js?v=20260816-stream1"></script>
+  <script src="app.js?v=20260822-agent2"></script>
   <script src="design.js"></script>
 </body>
 </html>
