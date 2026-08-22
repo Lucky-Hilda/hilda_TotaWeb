@@ -191,17 +191,32 @@ def extract_trip_constraints(
             base["start_time"] = value
             changes.append(f"到达：{value}")
     else:
-        relative = re.search(r"(晚|推迟|延后|早|提前)\s*(\d+|半)\s*(分钟|小时)", text)
-        if relative:
+        relative = re.search(
+            r"(晚|推迟|延后|早|提前)\s*(?:到)?\s*(\d+|半)\s*(分钟|小时)",
+            text,
+        )
+        relative_en = re.search(
+            r"(\d+)\s*(minutes?|hours?)\s*(later|earlier)",
+            text,
+            re.IGNORECASE,
+        )
+        if relative or relative_en:
             anchor = _clock_minutes(base.get("start_time"))
             if anchor is None and current_plan and current_plan.stops:
                 anchor = _clock_minutes(current_plan.stops[0].time)
             if anchor is not None:
-                amount = 30 if relative.group(2) == "半" else int(relative.group(2))
-                if relative.group(3) == "小时":
-                    amount *= 60
-                if relative.group(1) in {"早", "提前"}:
-                    amount *= -1
+                if relative:
+                    amount = 30 if relative.group(2) == "半" else int(relative.group(2))
+                    if relative.group(3) == "小时":
+                        amount *= 60
+                    if relative.group(1) in {"早", "提前"}:
+                        amount *= -1
+                else:
+                    amount = int(relative_en.group(1))
+                    if relative_en.group(2).lower().startswith("hour"):
+                        amount *= 60
+                    if relative_en.group(3).lower() == "earlier":
+                        amount *= -1
                 value = _clock_text(anchor + amount)
                 base["start_time"] = value
                 changes.append(f"到达调整为：{value}")
