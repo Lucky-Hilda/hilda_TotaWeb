@@ -276,10 +276,13 @@ def extract_trip_constraints(
             (r"排队|人多", "长时间排队"),
         ]
         for pattern, label in avoid_rules:
-            if re.search(pattern, text):
-                avoid.append(label)
-                if label in preferences:
-                    preferences.remove(label)
+            for match in re.finditer(pattern, text):
+                local_prefix = text[max(0, match.start() - 8) : match.start()]
+                if re.search(r"不要|避开|不想|不去|排除|取消", local_prefix):
+                    avoid.append(label)
+                    if label in preferences:
+                        preferences.remove(label)
+                    break
     avoid = _unique(avoid)
     if avoid != base.get("avoid", []):
         base["avoid"] = avoid
