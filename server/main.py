@@ -375,6 +375,91 @@ def validate_route(
     }
 
 
+def repair_route_deterministically(
+    route: Any,
+    constraints: Optional[TripConstraints] = None,
+) -> Dict[str, Any]:
+    """Deterministic tool: repair common schedule conflicts without a second model call."""
+    constraints = constraints or TripConstraints()
+    source = _model_dump(route) if isinstance(route, BaseModel) else route
+    data = json.loads(json.dumps(source, ensure_ascii=False))
+    stops = data.get("stops") or []
+    if not 3 <= len(stops) <= 6:
+        raise ValueError("确定性修复需要 3–6 个完整站点")
+
+    start = _clock_minutes(constraints.start_time)
+    if start is None:
+        start = _clock_minutes(stops[0].get("time")) or (16 * 60 + 30)
+
+    durations = [max(10, _duration_minutes(stop.get("duration", "")) or 30) for stop in stops]
+    limit = _duration_minutes(constraints.duration or "")
+    if limit is not None and sum(durations) > limit + 30:
+        budget = max(limit, len(stops) * 10)
+        base = budget // len(stops)
+        durations = [base for _ in stops]
+        for index in range(budget - base * len(stops)):
+            durations[index] += 1
+
+    safe_replacements = {
+        "高空刺激": (
+            ["笨猪跳", "蹦极", "空中漫步", "高空项目", "冒险体验"],
+            "室内观景与城市故事",
+            "在室内观景层沿城市天际线慢慢浏览，补充澳门城市地标与历史信息。",
+        ),
+        "餐饮": (
+            ["餐厅", "晚餐", "用餐", "餐饮"],
+            "观景层自由活动",
+            "保留一段不设固定消费项目的自由活动时间，按现场状态灵活休息。",
+        ),
+        "拍照": (
+            ["拍照", "摄影", "打卡"],
+            "城市天际线观察",
+            "把注意力放在城市方位与景观层次，不设置专门的影像任务。",
+        ),
+        "长时间排队": (
+            ["排队等候", "长时间排队"],
+            "机动体验时段",
+            "根据现场人流选择较顺畅的体验，遇到拥挤可直接切换到下一站。",
+        ),
+    }
+
+    seen: Dict[str, int] = {}
+    cursor = start
+    for index, stop in enumerate(stops):
+        stop_text = f"{stop.get('title', '')} {stop.get('description', '')} {stop.get('tip', '')}"
+        for avoid in constraints.avoid:
+            terms, safe_title, safe_description = safe_replacements.get(
+                avoid,
+                ([avoid], "观景层机动体验", "按已确认的排除条件选择安全、轻松的现场体验。"),
+            )
+            if any(term in stop_text for term in terms):
+                stop["title"] = safe_title
+                stop["description"] = safe_description
+                stop["tip"] = "该站已按你的排除条件自动替换。"
+                break
+
+        title = (stop.get("title") or f"路线站点 {index + 1}").strip()
+        seen[title] = seen.get(title, 0) + 1
+        if seen[title] > 1:
+            title = f"{title} · 补充体验 {seen[title]}"
+        stop["title"] = title[:80]
+        stop["time"] = _clock_text(cursor)
+        stop["duration"] = f"{durations[index]}分钟"
+        cursor += durations[index]
+
+    total = sum(durations)
+    data["recommended_time"] = f"{_clock_text(start)}–{_clock_text(start + total)}"
+    data["duration"] = f"约{total}分钟"
+    if constraints.pace:
+        data["pace"] = constraints.pace
+    data["summary"] = (
+        (data.get("summary") or "已生成可执行路线").rstrip("。")
+        + "；系统已按已确认条件重新校准时间与冲突项。"
+    )[:300]
+    repaired = _model_validate(RoutePresentation, data)
+    return _model_dump(repaired)
+
+
 def compare_routes(
     previous: Optional[RoutePresentation],
     current: RoutePresentation,
@@ -693,6 +778,18 @@ async def chat(req: ChatRequest) -> Dict[str, Any]:
             presentation = _validated_route(content)
             validation = validate_route(presentation, constraints)
             if not validation["passed"]:
+                presentation = repair_route_deterministically(presentation, constraints)
+                validation = validate_route(presentation, constraints)
+                validation["repair_attempts"] = 1
+                validation["repair_mode"] = "deterministic"
+                trace.append(
+                    _trace(
+                        "revise_route",
+                        "自动修复路线",
+                        "确定性工具已校准时间、重复站点与排除项",
+                    )
+                )
+            if not validation["passed"]:
                 raise ValueError("；".join(validation["issues"]))
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             raise HTTPException(
@@ -834,7 +931,23 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                     }
 
                 repair_attempts = 0
-                if not validation["passed"] and MAX_REPAIR_ATTEMPTS:
+                if not validation["passed"] and presentation is not None:
+                    repair_attempts = 1
+                    yield _stream_line("status", stage="repairing")
+                    presentation = repair_route_deterministically(
+                        presentation,
+                        constraints,
+                    )
+                    validation = validate_route(presentation, constraints)
+                    validation["repair_mode"] = "deterministic"
+                    trace.append(
+                        _trace(
+                            "revise_route",
+                            "自动修复路线",
+                            "确定性工具已校准时间、重复站点与排除项",
+                        )
+                    )
+                elif not validation["passed"] and MAX_REPAIR_ATTEMPTS:
                     repair_attempts = 1
                     yield _stream_line("status", stage="repairing")
                     repair_prompt = _build_system_prompt(
@@ -862,18 +975,27 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                     try:
                         presentation = _validated_route(repaired_content)
                         validation = validate_route(presentation, constraints)
+                        validation["repair_mode"] = "model"
                     except Exception as exc:
                         validation = {
                             "passed": False,
                             "checks": [],
-                            "issues": [f"自动修复后结构仍不完整：{exc!s}"],
+                            "issues": [f"模型修复后结构仍不完整：{exc!s}"],
                             "repair_attempts": repair_attempts,
                         }
+
+                    if not validation["passed"] and state.current_plan is not None:
+                        presentation = repair_route_deterministically(
+                            state.current_plan,
+                            constraints,
+                        )
+                        validation = validate_route(presentation, constraints)
+                        validation["repair_mode"] = "deterministic_fallback"
                     trace.append(
                         _trace(
                             "revise_route",
                             "自动修复路线",
-                            "根据约束检查结果完成 1 次定向修复",
+                            "根据约束检查结果完成定向修复",
                         )
                     )
 
