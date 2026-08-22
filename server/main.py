@@ -242,7 +242,14 @@ def extract_trip_constraints(
     ]
     negative = bool(re.search(r"不要|避开|不想|不去|排除|取消", text))
     for pattern, label in preference_rules:
-        if re.search(pattern, text) and not negative:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        local_prefix = text[max(0, match.start() - 8) : match.start()]
+        is_locally_negative = bool(
+            re.search(r"不要|避开|不想|不去|排除|取消", local_prefix)
+        )
+        if not is_locally_negative:
             preferences.append(label)
     preferences = _unique(preferences)
     if preferences != base.get("preferences", []):
