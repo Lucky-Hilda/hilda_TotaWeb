@@ -54,13 +54,19 @@ class AgentWorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(len(changes), 5)
 
         shifted, shifted_changes = main.extract_trip_constraints(
-            "晚30分钟到，而且不要高空刺激项目",
+            "晚到30分钟，而且不要高空刺激项目",
             first,
         )
         self.assertEqual(shifted.start_time, "17:00")
         self.assertIn("高空刺激", shifted.avoid)
         self.assertNotIn("冒险", shifted.preferences)
         self.assertTrue(any("17:00" in item for item in shifted_changes))
+
+        english_shifted, _ = main.extract_trip_constraints(
+            "Arrive 30 minutes later",
+            first,
+        )
+        self.assertEqual(english_shifted.start_time, "17:00")
 
         mixed, _ = main.extract_trip_constraints("想看夜景和拍照，但不要高空刺激项目")
         self.assertEqual(mixed.preferences, ["夜景", "拍照"])
