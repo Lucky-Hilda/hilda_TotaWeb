@@ -83,6 +83,25 @@ class AgentWorkflowTests(unittest.TestCase):
         failed = {item["code"] for item in result["checks"] if not item["passed"]}
         self.assertTrue({"chronology", "duplicates", "duration", "avoid"}.issubset(failed))
 
+        repaired = main.repair_route_deterministically(
+            broken,
+            main.TripConstraints(
+                start_time="17:00",
+                duration="2小时",
+                avoid=["高空刺激"],
+            ),
+        )
+        repaired_validation = main.validate_route(
+            repaired,
+            main.TripConstraints(
+                start_time="17:00",
+                duration="2小时",
+                avoid=["高空刺激"],
+            ),
+        )
+        self.assertTrue(repaired_validation["passed"])
+        self.assertEqual(repaired["stops"][0]["time"], "17:00")
+        self.assertNotIn("笨猪跳", json.dumps(repaired, ensure_ascii=False))
 
     def test_invalid_candidate_is_repaired_once(self):
         original_client = main.httpx.AsyncClient
